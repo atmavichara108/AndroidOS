@@ -3,7 +3,11 @@ description: Реализация утвержденного AndroidOS scope и 
 mode: primary
 permission:
   edit: allow
-  bash: ask
+  bash:
+    "*": allow
+    "sudo *": deny
+    "git push --force*": deny
+    "git push -f*": deny
   task:
     reviewer: allow
     verifier: allow

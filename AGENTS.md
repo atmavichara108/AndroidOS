@@ -27,6 +27,11 @@ AndroidOS — modular umbrella/hybrid project. Первый flagship — Persona
 
 ## Workflow
 
+Перед execution изменением вызови `/spec <selector>` после чтения локальных
+`AGENTS.md` и `README.md`. Canonical specs находятся в
+`/home/rudra/Projects/OpenCode-Vault/06-Specs/AndroidOS/`; не создавай копии и
+не используй случайный локальный fallback. Недоступность Vault = `BLOCKED`.
+
 1. `planner` фиксирует scope, контракты, roadmap и acceptance, не пишет application code.
 2. `researcher` проверяет OSS/device/runtime claims read-only и возвращает evidence.
 3. `builder` реализует только согласованный scope AndroidOS и добавляет проверяемые тесты/документацию.

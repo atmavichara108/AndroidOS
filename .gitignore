@@ -35,3 +35,8 @@ transcripts/
 *.jks
 *.p12
 secrets/
+
+# Local tooling caches and session logs (never committed)
+.kotlin/
+.mcode/
+build-logs/
