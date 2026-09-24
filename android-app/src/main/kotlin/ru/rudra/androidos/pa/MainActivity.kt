@@ -1,8 +1,11 @@
 package ru.rudra.androidos.pa
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -19,6 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.UUID
 import ru.rudra.androidos.pa.data.EntityRow
@@ -34,8 +39,13 @@ import ru.rudra.androidos.pa.domain.model.RetentionClass
 
 class MainActivity : ComponentActivity() {
 
+    private val requestPermissions = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* потери отсутствуют: запись просто не начнётся без гранта на микрофон */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestRuntimePermissions()
         val db = PaDatabase.get(this)
         val store = RoomLocalStore(db)
         val deviceId = UUID.randomUUID().toString()
@@ -44,6 +54,14 @@ class MainActivity : ComponentActivity() {
                 InboxScreen(db, store, deviceId)
             }
         }
+    }
+
+    private fun requestRuntimePermissions() {
+        val perms = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        }.toTypedArray()
+        requestPermissions.launch(perms)
     }
 }
 
@@ -132,9 +150,11 @@ private fun InboxScreen(
 private fun ReminderTextRow(db: PaDatabase, targetId: String) {
     var reminderText by remember(targetId) { mutableStateOf<String?>(null) }
     LaunchedEffect(targetId) {
-        runCatching {
-            val r = db.reminderDao().active().firstOrNull { it.targetId == targetId }
-            reminderText = r?.let { "⏰ ${it.triggerAt} (${it.timezone})" }
+        reminderText = withContext(Dispatchers.IO) {
+            runCatching {
+                val r = db.reminderDao().active().firstOrNull { it.targetId == targetId }
+                r?.let { "⏰ ${it.triggerAt} (${it.timezone})" }
+            }.getOrNull()
         }
     }
     reminderText?.let { Text(it) }
