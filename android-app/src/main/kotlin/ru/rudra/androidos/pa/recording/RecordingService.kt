@@ -43,7 +43,12 @@ class RecordingService : Service() {
             startForegroundCompat()
             currentSessionId = UUID.randomUUID().toString()
             currentFile = newRecordingFile(currentSessionId!!)
-            recorder = MediaRecorder(this).apply {
+            recorder = if (Build.VERSION.SDK_INT >= 31) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }.apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -96,7 +101,11 @@ class RecordingService : Service() {
     }
 
     private fun newRecordingFile(sessionId: String): File {
-        val dir = getExternalFilesDir(Environment.DIRECTORY_RECORDINGS) ?: filesDir
+        val dir = if (Build.VERSION.SDK_INT >= 31) {
+            getExternalFilesDir(Environment.DIRECTORY_RECORDINGS) ?: filesDir
+        } else {
+            filesDir
+        }
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "$sessionId.m4a")
     }
