@@ -18,13 +18,21 @@ data class StudioUiState(
     val isLoading: Boolean = false,
     val simulated: Boolean = true,
     val approvals: Set<String> = emptySet(),
+    val recording: StudioRecording = StudioRecording.IDLE,
 ) {
     fun toUiInboxState(): UiInboxState = UiInboxState(items = items, error = error, isLoading = isLoading)
+}
+
+/** Synthetic recording lifecycle for UI/UX testing; no MediaRecorder side effects. */
+enum class StudioRecording(val label: String) {
+    IDLE("Record"),
+    RECORDING("Stop"),
 }
 
 sealed interface StudioAction {
     data class SelectScenario(val scenario: StudioScenario) : StudioAction
     data class Approve(val id: String, val destination: String) : StudioAction
+    data object ToggleRecording : StudioAction
     data object Retry : StudioAction
     data object Reset : StudioAction
 }
@@ -35,6 +43,18 @@ fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = wh
         "${action.destination}:${action.id}" !in state.approvals) {
         state.copy(approvals = state.approvals + "${action.destination}:${action.id}")
     } else state
+    StudioAction.ToggleRecording -> when (state.recording) {
+        StudioRecording.IDLE -> state.copy(recording = StudioRecording.RECORDING)
+        StudioRecording.RECORDING -> state.copy(
+            recording = StudioRecording.IDLE,
+            items = state.items + studioItem(
+                id = "demo-rec",
+                body = "Запись голосом (синтетическая)",
+                stateLabel = "CAPTURED",
+                capturedLabel = "13:00:00",
+            ),
+        )
+    }
     StudioAction.Retry -> if (state.error != null) state.copy(error = null, items = StudioScenario.CAPTURED.toUiState().items) else state
     StudioAction.Reset -> state.scenario.toUiState()
 }

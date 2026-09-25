@@ -40,6 +40,15 @@ class StudioReducerTest {
         assertEquals(replayed, replayStudio(StudioScenario.EMPTY, actions))
     }
 
+    @Test fun recordingToggleTransitionsAndCapturesOnStop() {
+        val initial = StudioScenario.CAPTURED.toUiState()
+        val recording = reduceStudio(initial, StudioAction.ToggleRecording)
+        assertEquals(StudioRecording.RECORDING, recording.recording)
+        val stopped = reduceStudio(recording, StudioAction.ToggleRecording)
+        assertEquals(StudioRecording.IDLE, stopped.recording)
+        assertTrue(stopped.items.any { it.id == "demo-rec" })
+    }
+
     @Test fun invalidApprovalsDoNotMutateState() {
         val initial = StudioScenario.CAPTURED.toUiState()
         assertEquals(initial, reduceStudio(initial, StudioAction.Approve("missing", "task")))

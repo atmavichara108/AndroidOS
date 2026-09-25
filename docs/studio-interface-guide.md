@@ -43,12 +43,20 @@ The selected scenario is the filled button; the others are outlined.
 
 ## Preview (inbox) items
 
-Each inbox item shows:
+Each inbox row shows:
 
+- a `New note` field with a `Capture` button,
+- a **Record / Stop** button next to the field (synthetic in Studio: toggling to
+  Stop appends a voice-captured item; no MediaRecorder side effect; hidden in the
+  error scenario),
 - a timestamp and a state tag (`CAPTURED`, `TRANSCRIPT_EDIT`, ...),
 - the transcript/note body,
 - two actions: `→ Task` and `→ Event`,
 - an `Approved: …` label once a destination has been approved.
+
+**Recordings** — a section under the note list showing finished recordings
+(`capturedLabel · size KB`). In Studio the items are synthetic and the rows are
+disabled (no `onPlay`); in production tapping a row plays the m4a.
 
 `→ Task` and `→ Event` are the simulated approval actions. Approving a destination
 adds it to `state.approvals`; the same destination cannot be approved twice for the

@@ -9,11 +9,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -23,6 +28,10 @@ import ru.rudra.androidos.pa.data.InboxItemRow
 import ru.rudra.androidos.pa.data.PaDatabase
 import ru.rudra.androidos.pa.data.ReminderRow
 import ru.rudra.androidos.pa.data.RoomLocalStore
+import ru.rudra.androidos.pa.domain.statemachine.CaptureState
+import ru.rudra.androidos.pa.recording.RecordingBus
+import ru.rudra.androidos.pa.recording.RecordingCommands
+import ru.rudra.androidos.pa.recording.RecordingStore
 import ru.rudra.androidos.pa.domain.model.Change
 import ru.rudra.androidos.pa.domain.model.ChangeOperation
 import ru.rudra.androidos.pa.domain.model.InboxKind
@@ -32,6 +41,7 @@ import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.UiInboxState
+import ru.rudra.androidos.pa.ui.UiRecording
 
 class MainActivity : ComponentActivity() {
 
@@ -68,6 +78,46 @@ private fun InboxScreenHost(
     deviceId: String,
 ) {
     var ui by remember { mutableStateOf(UiInboxState(isLoading = true)) }
+    var recordings by remember { mutableStateOf(emptyList<UiRecording>()) }
+    val captureState by RecordingBus.state.collectAsState()
+    val context = LocalContext.current
+    val player = remember { android.media.MediaPlayer() }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            player.release()
+        }
+    }
+
+    fun loadRecordings() {
+        Thread {
+            recordings = runCatching {
+                val extDir = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    context.getExternalFilesDir(android.os.Environment.DIRECTORY_RECORDINGS)
+                } else {
+                    null
+                }
+                RecordingStore.list(context.filesDir, extDir).map {
+                    UiRecording(
+                        path = it.path,
+                        label = it.capturedLabel,
+                        sizeBytes = it.sizeBytes,
+                    )
+                }
+            }.getOrElse { emptyList() }
+        }.start()
+    }
+
+    fun play(rec: UiRecording) {
+        Thread {
+            runCatching {
+                player.reset()
+                player.setDataSource(rec.path)
+                player.prepare()
+                player.start()
+            }
+        }.start()
+    }
 
     fun toUiState(rows: List<InboxItemRow>) = UiInboxState(
         items = rows.map { r ->
@@ -81,6 +131,7 @@ private fun InboxScreenHost(
     )
 
     fun reload() {
+        loadRecordings()
         Thread {
             ui = runCatching { toUiState(db.inboxDao().all()) }
                 .getOrElse { UiInboxState(error = it.message ?: "load failed") }
@@ -88,6 +139,10 @@ private fun InboxScreenHost(
     }
 
     LaunchedEffect(Unit) { reload() }
+
+    LaunchedEffect(captureState) {
+        if (captureState == CaptureState.IDLE || captureState == CaptureState.STOPPED) reload()
+    }
 
     InboxScreen(
         state = ui,
@@ -99,6 +154,21 @@ private fun InboxScreenHost(
             }
         },
         itemExtra = { item -> ReminderTextRow(db, item.id) },
+        recordingLabel = when (captureState) {
+            CaptureState.RECORDING -> "Stop"
+            CaptureState.PAUSED -> "Resume"
+            CaptureState.IDLE, CaptureState.STOPPED -> "Record"
+        },
+        onRecord = {
+            val command = when (captureState) {
+                CaptureState.RECORDING -> "stop"
+                CaptureState.PAUSED -> "resume"
+                CaptureState.IDLE, CaptureState.STOPPED -> "start"
+            }
+            RecordingCommands.send(context, command)
+        },
+        recordings = recordings,
+        onPlay = { rec -> play(rec) },
     )
 }
 

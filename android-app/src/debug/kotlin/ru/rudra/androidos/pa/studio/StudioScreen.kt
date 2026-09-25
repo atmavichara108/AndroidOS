@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.UiInboxAction
+import ru.rudra.androidos.pa.ui.UiRecording
 
 /**
  * Embedded UI lab. It deliberately has no Android, Room, microphone or alarm side effects.
@@ -84,7 +85,14 @@ fun StudioScreen(
                     is UiInboxAction.ApproveEvent -> dispatch(StudioAction.Approve(uiAction.id, "event"))
                     is UiInboxAction.Capture -> Unit
                 }
-            })
+            },
+                recordingLabel = if (state.error == null) state.recording.label else null,
+                onRecord = { dispatch(StudioAction.ToggleRecording) },
+                recordings = listOf(
+                    UiRecording("/simulated/demo-rec.m4a", "09-26 14:00", 48_512),
+                    UiRecording("/simulated/long-rec.m4a", "09-25 09:30", 1_048_576),
+                ),
+            )
             if (inspector) InspectorPanel(state, actions)
             }
         }

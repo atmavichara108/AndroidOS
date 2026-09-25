@@ -11,10 +11,16 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import ru.rudra.androidos.pa.data.InboxItemRow
+import ru.rudra.androidos.pa.data.PaDatabase
+import ru.rudra.androidos.pa.domain.model.InboxKind
+import ru.rudra.androidos.pa.domain.model.InboxState
+import ru.rudra.androidos.pa.domain.model.RetentionClass
 import ru.rudra.androidos.pa.domain.statemachine.CaptureCommand
 import ru.rudra.androidos.pa.domain.statemachine.CaptureStateMachine
 import ru.rudra.androidos.pa.domain.statemachine.CaptureState
 import java.io.File
+import java.time.Instant
 import java.util.UUID
 
 class RecordingService : Service() {
@@ -37,8 +43,13 @@ class RecordingService : Service() {
         return START_STICKY
     }
 
+    private fun publish(state: CaptureState) {
+        RecordingBus.state.value = state
+    }
+
     private fun onStart() {
         val result = stateMachine.dispatch(CaptureCommand.Start)
+        publish(stateMachine.current())
         if (result.changed) {
             startForegroundCompat()
             currentSessionId = UUID.randomUUID().toString()
@@ -61,6 +72,7 @@ class RecordingService : Service() {
 
     private fun onPause() {
         val result = stateMachine.dispatch(CaptureCommand.Pause)
+        publish(stateMachine.current())
         if (result.changed) {
             pauseRecorder()
         }
@@ -68,6 +80,7 @@ class RecordingService : Service() {
 
     private fun onResume() {
         val result = stateMachine.dispatch(CaptureCommand.Resume)
+        publish(stateMachine.current())
         if (result.changed) {
             resumeRecorder()
         }
@@ -75,12 +88,45 @@ class RecordingService : Service() {
 
     private fun onStop() {
         val result = stateMachine.dispatch(CaptureCommand.Stop)
+        publish(stateMachine.current())
         if (result.changed) {
             stopRecorder()
+            registerAudioInboxItem()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
+
+    private fun registerAudioInboxItem() {
+        val file = currentFile ?: return
+        if (!file.exists() || file.length() == 0L) return
+        val db = PaDatabase.get(this)
+        val now = Instant.now().toString()
+        db.runInTransaction {
+            db.inboxDao().insert(
+                InboxItemRow(
+                    id = currentSessionId ?: UUID.randomUUID().toString(),
+                    kind = InboxKind.AUDIO.name,
+                    state = InboxState.CAPTURED.name,
+                    transcriptId = null,
+                    body = file.name,
+                    sourceDeviceId = deviceId(),
+                    capturedAt = now,
+                    createdAt = now,
+                    updatedAt = now,
+                    retentionClass = RetentionClass.TEMPORARY_AUDIO.name,
+                    version = 1,
+                    deletedAt = null,
+                )
+            )
+        }
+    }
+
+    private fun deviceId(): String =
+        android.provider.Settings.Secure.getString(
+            contentResolver,
+            android.provider.Settings.Secure.ANDROID_ID,
+        ) ?: "unknown-device"
 
     private fun pauseRecorder() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
