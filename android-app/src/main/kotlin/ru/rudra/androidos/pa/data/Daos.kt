@@ -54,6 +54,9 @@ interface EntityDao {
 
     @Query("SELECT * FROM entities WHERE status = 'APPROVED' AND deletedAt IS NULL")
     fun approved(): List<EntityRow>
+
+    @Query("SELECT * FROM entities WHERE id = :id")
+    fun byId(id: String): EntityRow?
 }
 
 @Dao
@@ -63,4 +66,10 @@ interface ReminderDao {
 
     @Query("SELECT * FROM reminders WHERE state = 'ACTIVE'")
     fun active(): List<ReminderRow>
+
+    @Query("SELECT * FROM reminders WHERE id = :id")
+    fun byId(id: String): ReminderRow?
+
+    @Query("UPDATE reminders SET state = :state WHERE id = :id")
+    fun setState(id: String, state: String)
 }

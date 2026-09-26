@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">AndroidOS PA</string>
     <string name="capture_widget_description">Widget start/pause/resume/stop</string>
+    <string name="reminder_channel_name">Reminders</string>
+    <string name="reminder_fallback_title">Reminder</string>
 </resources>

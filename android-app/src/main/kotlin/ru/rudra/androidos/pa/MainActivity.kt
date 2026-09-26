@@ -43,6 +43,7 @@ import ru.rudra.androidos.pa.domain.statemachine.CaptureState
 import ru.rudra.androidos.pa.recording.RecordingBus
 import ru.rudra.androidos.pa.recording.RecordingCommands
 import ru.rudra.androidos.pa.recording.RecordingStore
+import ru.rudra.androidos.pa.reminder.ReminderScheduler
 import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxAction
@@ -174,8 +175,8 @@ private fun InboxScreenHost(
             android.util.Log.d("PA_ACTION", "action=$action")
             when (action) {
                 is UiInboxAction.Capture -> capture(db, store, deviceId, action.text) { reload() }
-                is UiInboxAction.ApproveTask -> approve(db, store, deviceId, action.id, "TASK") { reload() }
-                is UiInboxAction.ApproveEvent -> approve(db, store, deviceId, action.id, "EVENT") { reload() }
+                is UiInboxAction.ApproveTask -> approve(db, store, context, deviceId, action.id, "TASK") { reload() }
+                is UiInboxAction.ApproveEvent -> approve(db, store, context, deviceId, action.id, "EVENT") { reload() }
                 is UiInboxAction.BeginTranscriptEdit -> {
                     editingIds = editingIds + action.id
                     reload()
@@ -229,7 +230,7 @@ private fun InboxScreenHost(
                 }
                 is UiInboxAction.ConfirmApproval -> {
                     pendingApproval = null
-                    approve(db, store, deviceId, action.id, action.kind) { reload() }
+                    approve(db, store, context, deviceId, action.id, action.kind) { reload() }
                 }
                 UiInboxAction.CancelApproval -> {
                     pendingApproval = null
@@ -442,6 +443,7 @@ private fun deleteRecordingFile(context: Context, rec: UiRecording, onDone: () -
 private fun approve(
     db: PaDatabase,
     store: RoomLocalStore,
+    context: Context,
     deviceId: String,
     inboxItemId: String,
     kind: String,
@@ -454,7 +456,9 @@ private fun approve(
             val item = db.inboxDao().byId(inboxItemId)
             val title = effectiveTitle(db, inboxItemId, item)
             val attrsJson = org.json.JSONObject().put("title", title).toString()
-            val triggerAt = Instant.now().plusSeconds(60 * 60).toString()
+            val triggerAtMillis = System.currentTimeMillis() + REMINDER_DELAY_MS
+            val triggerAt = Instant.ofEpochMilli(triggerAtMillis).toString()
+            val reminderId = UUID.randomUUID().toString()
             db.runInTransaction {
                 db.entityDao().insert(
                     EntityRow(
@@ -469,7 +473,7 @@ private fun approve(
                 )
                 db.reminderDao().insert(
                     ReminderRow(
-                        id = UUID.randomUUID().toString(),
+                        id = reminderId,
                         targetId = entityId,
                         triggerAt = triggerAt,
                         timezone = java.util.TimeZone.getDefault().id,
@@ -494,13 +498,18 @@ private fun approve(
                     )
                 )
             }
-            android.util.Log.d("PA_APPROVE", "created $kind entity=$entityId title='$title' item=$inboxItemId")
+            ReminderScheduler.schedule(context, reminderId, entityId, triggerAtMillis)
+            android.util.Log.d("PA_APPROVE", "created $kind entity=$entityId title='$title' reminder=$reminderId at $triggerAt")
         } catch (e: Exception) {
             android.util.Log.e("PA_APPROVE", "approve failed for $inboxItemId", e)
         }
         onDone()
     }.start()
 }
+
+// [проверить] фиксированный сдвиг напоминания до появления extraction дат из
+// транскрипта (P2): пока «через час» — provisional placeholder.
+private const val REMINDER_DELAY_MS = 60L * 60L * 1000L
 
 /**
  * Effective human-readable title for an inbox item: edited transcript first,
