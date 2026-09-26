@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.content.Context
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +45,7 @@ import ru.rudra.androidos.pa.recording.RecordingBus
 import ru.rudra.androidos.pa.recording.RecordingCommands
 import ru.rudra.androidos.pa.recording.RecordingStore
 import ru.rudra.androidos.pa.reminder.ReminderScheduler
+import ru.rudra.androidos.pa.sync.SyncHooks
 import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxAction
@@ -65,11 +67,28 @@ class MainActivity : ComponentActivity() {
         val db = PaDatabase.get(this)
         val store = RoomLocalStore(db)
         val deviceId = UUID.randomUUID().toString()
+        handleSyncIntent(intent, db, store)
         setContent {
             MaterialTheme {
                 InboxScreenHost(db, store, deviceId)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val db = PaDatabase.get(this)
+        handleSyncIntent(intent, db, RoomLocalStore(db))
+    }
+
+    /** Scriptable P1-02 sync hook; see SyncHooks for the adb invocation. */
+    private fun handleSyncIntent(intent: Intent?, db: PaDatabase, store: RoomLocalStore) {
+        val command = intent?.getStringExtra(SyncHooks.EXTRA_COMMAND) ?: return
+        val appContext = applicationContext
+        Thread {
+            runCatching { SyncHooks.run(command, appContext, db, store) }
+                .onFailure { android.util.Log.e("PA_SYNC", "sync hook failed", it) }
+        }.start()
     }
 
     private fun requestRuntimePermissions() {

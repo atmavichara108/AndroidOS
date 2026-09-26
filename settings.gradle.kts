@@ -19,3 +19,4 @@ rootProject.name = "AndroidOS"
 
 include(":domain")
 include(":android-app")
+include(":peer")

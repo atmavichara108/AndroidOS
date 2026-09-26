@@ -12,6 +12,9 @@ interface ChangeDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM changes WHERE idempotencyKey = :key OR id = :id)")
     fun exists(id: String, key: String): Boolean
+
+    @Query("SELECT * FROM changes ORDER BY occurredAt, id")
+    fun all(): List<ChangeRow>
 }
 
 @Dao
