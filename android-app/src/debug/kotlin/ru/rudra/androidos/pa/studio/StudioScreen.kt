@@ -89,6 +89,9 @@ fun StudioScreen(
                     is UiInboxAction.SaveTranscriptEdit -> dispatch(StudioAction.SaveTranscriptEdit(uiAction.id, uiAction.text))
                     is UiInboxAction.CancelTranscriptEdit -> dispatch(StudioAction.CancelTranscriptEdit(uiAction.id))
                     is UiInboxAction.Delete -> dispatch(StudioAction.Delete(uiAction.id))
+                    is UiInboxAction.RequestApprove -> dispatch(StudioAction.RequestApprove(uiAction.id, uiAction.kind))
+                    is UiInboxAction.ConfirmApproval -> dispatch(StudioAction.ConfirmApproval(uiAction.id, uiAction.kind))
+                    UiInboxAction.CancelApproval -> dispatch(StudioAction.CancelApproval)
                 }
             },
                 recordingLabel = if (state.error == null) state.recording.label else null,

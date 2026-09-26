@@ -96,4 +96,24 @@ class StudioReducerTest {
         assertEquals("SYNCED", resolved.sync.status)
         assertTrue(resolved.sync.conflicts.isEmpty())
     }
+
+    @Test fun approvalRequiresExplicitConfirmation() {
+        val requested = reduceStudio(
+            StudioScenario.CAPTURED.toUiState(),
+            StudioAction.RequestApprove("demo-1", "TASK"),
+        )
+        assertEquals("demo-1", requested.pendingApproval?.id)
+        assertTrue(requested.approvals.isEmpty())
+
+        val cancelled = reduceStudio(requested, StudioAction.CancelApproval)
+        assertEquals(null, cancelled.pendingApproval)
+        assertTrue(cancelled.approvals.isEmpty())
+
+        val confirmed = reduceStudio(
+            requested,
+            StudioAction.ConfirmApproval("demo-1", "TASK"),
+        )
+        assertEquals(null, confirmed.pendingApproval)
+        assertTrue(confirmed.approvals.contains("task:demo-1"))
+    }
 }

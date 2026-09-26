@@ -73,6 +73,11 @@ class SherpaTranscriber(private val context: Context) : Transcriber {
 
             val stream = rec.createStream()
             stream.acceptWaveform(samples, sampleRate)
+            // Streaming CTC emits the final tokens only after trailing context;
+            // feed 0.5 s of silence before inputFinished, otherwise the last
+            // word(s) are dropped.
+            val tailPadding = FloatArray(sampleRate / 2)
+            stream.acceptWaveform(tailPadding, sampleRate)
             stream.inputFinished()
             while (rec.isReady(stream)) rec.decode(stream)
             val text = rec.getResult(stream).text

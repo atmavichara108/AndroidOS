@@ -44,6 +44,7 @@ import ru.rudra.androidos.pa.recording.RecordingBus
 import ru.rudra.androidos.pa.recording.RecordingCommands
 import ru.rudra.androidos.pa.recording.RecordingStore
 import ru.rudra.androidos.pa.ui.InboxScreen
+import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.UiInboxState
@@ -130,6 +131,7 @@ private fun InboxScreenHost(
 
     var transcribingIds by remember { mutableStateOf(emptySet<String>()) }
     var editingIds by remember { mutableStateOf(emptySet<String>()) }
+    var pendingApproval by remember { mutableStateOf<PendingApproval?>(null) }
 
     fun toUiState(rows: List<InboxItemRow>) = UiInboxState(
         items = rows.map { r ->
@@ -149,6 +151,7 @@ private fun InboxScreenHost(
                 isTranscriptEditing = r.id in editingIds,
             )
         },
+        pendingApproval = pendingApproval,
     )
 
     fun reload() {
@@ -168,6 +171,7 @@ private fun InboxScreenHost(
     InboxScreen(
         state = ui,
         onAction = { action ->
+            android.util.Log.d("PA_ACTION", "action=$action")
             when (action) {
                 is UiInboxAction.Capture -> capture(db, store, deviceId, action.text) { reload() }
                 is UiInboxAction.ApproveTask -> approve(db, store, deviceId, action.id, "TASK") { reload() }
@@ -213,6 +217,24 @@ private fun InboxScreenHost(
                     }.start()
                 }
                 is UiInboxAction.Delete -> deleteInboxItem(db, store, deviceId, context, action.id) { reload() }
+                is UiInboxAction.RequestApprove -> {
+                    val id = action.id
+                    val kind = action.kind
+                    Thread {
+                        val row = db.inboxDao().byId(id)
+                        val title = effectiveTitle(db, id, row)
+                        pendingApproval = PendingApproval(id, kind, title)
+                        reload()
+                    }.start()
+                }
+                is UiInboxAction.ConfirmApproval -> {
+                    pendingApproval = null
+                    approve(db, store, deviceId, action.id, action.kind) { reload() }
+                }
+                UiInboxAction.CancelApproval -> {
+                    pendingApproval = null
+                    reload()
+                }
             }
         },
         itemExtra = { item -> ReminderTextRow(db, item.id) },
@@ -426,50 +448,73 @@ private fun approve(
     onDone: () -> Unit,
 ) {
     Thread {
-        val now = Instant.now().toString()
-        val entityId = UUID.randomUUID().toString()
-        val item = db.inboxDao().byId(inboxItemId)
-        val attrsJson = org.json.JSONObject().put("title", item?.body.orEmpty()).toString()
-        val triggerAt = Instant.now().plusSeconds(60 * 60).toString()
-        db.runInTransaction {
-            db.entityDao().insert(
-                EntityRow(
-                    id = entityId,
-                    type = kind,
-                    schemaVersion = 1,
-                    attributesJson = attrsJson,
-                    status = "APPROVED",
-                    version = 1,
-                    deletedAt = null,
+        try {
+            val now = Instant.now().toString()
+            val entityId = UUID.randomUUID().toString()
+            val item = db.inboxDao().byId(inboxItemId)
+            val title = effectiveTitle(db, inboxItemId, item)
+            val attrsJson = org.json.JSONObject().put("title", title).toString()
+            val triggerAt = Instant.now().plusSeconds(60 * 60).toString()
+            db.runInTransaction {
+                db.entityDao().insert(
+                    EntityRow(
+                        id = entityId,
+                        type = kind,
+                        schemaVersion = 1,
+                        attributesJson = attrsJson,
+                        status = "APPROVED",
+                        version = 1,
+                        deletedAt = null,
+                    )
                 )
-            )
-            db.reminderDao().insert(
-                ReminderRow(
-                    id = UUID.randomUUID().toString(),
-                    targetId = entityId,
-                    triggerAt = triggerAt,
-                    timezone = java.util.TimeZone.getDefault().id,
-                    state = "ACTIVE",
-                    version = 1,
+                db.reminderDao().insert(
+                    ReminderRow(
+                        id = UUID.randomUUID().toString(),
+                        targetId = entityId,
+                        triggerAt = triggerAt,
+                        timezone = java.util.TimeZone.getDefault().id,
+                        state = "ACTIVE",
+                        version = 1,
+                    )
                 )
-            )
-            db.inboxDao().updateState(inboxItemId, InboxState.STRUCTURED.name, now)
-            store.applyChange(
-                Change(
-                    id = UUID.randomUUID().toString(),
-                    entityId = entityId,
-                    operation = ChangeOperation.CREATE,
-                    patch = mapOf("kind" to kind, "title" to item?.body.orEmpty()),
-                    actorDeviceId = deviceId,
-                    baseVersion = null,
-                    occurredAt = now,
-                    logicalClock = null,
-                    idempotencyKey = UUID.randomUUID().toString(),
-                    provenance = emptyList(),
-                    retentionClass = RetentionClass.PERMANENT,
+                db.inboxDao().updateState(inboxItemId, InboxState.STRUCTURED.name, now)
+                store.applyChange(
+                    Change(
+                        id = UUID.randomUUID().toString(),
+                        entityId = entityId,
+                        operation = ChangeOperation.CREATE,
+                        patch = mapOf("kind" to kind, "title" to title),
+                        actorDeviceId = deviceId,
+                        baseVersion = null,
+                        occurredAt = now,
+                        logicalClock = null,
+                        idempotencyKey = UUID.randomUUID().toString(),
+                        provenance = emptyList(),
+                        retentionClass = RetentionClass.PERMANENT,
+                    )
                 )
-            )
+            }
+            android.util.Log.d("PA_APPROVE", "created $kind entity=$entityId title='$title' item=$inboxItemId")
+        } catch (e: Exception) {
+            android.util.Log.e("PA_APPROVE", "approve failed for $inboxItemId", e)
         }
         onDone()
     }.start()
+}
+
+/**
+ * Effective human-readable title for an inbox item: edited transcript first,
+ * then raw transcript (AUDIO rows), then the body (TEXT rows). AUDIO body
+ * holds only the m4a file name, never a usable title.
+ */
+private fun effectiveTitle(db: PaDatabase, inboxItemId: String, item: InboxItemRow?): String {
+    if (item?.kind == InboxKind.AUDIO.name) {
+        val transcripts = runCatching { db.transcriptDao().forInboxItem(inboxItemId) }.getOrDefault(emptyList())
+        transcripts.lastOrNull { it.status == TranscriptStatus.EDITED.name }?.text
+            ?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        transcripts.lastOrNull { it.status == TranscriptStatus.RAW.name }?.text
+            ?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        return item.body.orEmpty().trim()
+    }
+    return item?.body.orEmpty().trim()
 }

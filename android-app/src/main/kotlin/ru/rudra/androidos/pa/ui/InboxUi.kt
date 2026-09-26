@@ -37,6 +37,13 @@ data class UiInboxState(
     val items: List<UiInboxItem> = emptyList(),
     val error: String? = null,
     val isLoading: Boolean = false,
+    val pendingApproval: PendingApproval? = null,
+)
+
+data class PendingApproval(
+    val id: String,
+    val kind: String,
+    val previewTitle: String,
 )
 
 sealed interface UiInboxAction {
@@ -48,6 +55,9 @@ sealed interface UiInboxAction {
     data class SaveTranscriptEdit(val id: String, val text: String) : UiInboxAction
     data class CancelTranscriptEdit(val id: String) : UiInboxAction
     data class Delete(val id: String) : UiInboxAction
+    data class RequestApprove(val id: String, val kind: String) : UiInboxAction
+    data class ConfirmApproval(val id: String, val kind: String) : UiInboxAction
+    data object CancelApproval : UiInboxAction
 }
 
 /** Clean UI record of a finished recording; hosts map their store type into it. */
@@ -109,6 +119,11 @@ fun InboxScreen(
         state.error?.let { err ->
             Text(err, Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.error)
         }
+        if (state.pendingApproval != null) {
+            state.pendingApproval?.let { approval ->
+                ApprovalPanel(approval, onAction)
+            }
+        }
         if (!state.isLoading && state.error == null && state.items.isEmpty()) {
             Text("No items yet", Modifier.padding(top = 8.dp))
         }
@@ -129,8 +144,8 @@ fun InboxScreen(
                     }
                     itemExtra(item)
                 }
-                TextButton({ onAction(UiInboxAction.ApproveTask(item.id)) }) { Text("→Task") }
-                TextButton({ onAction(UiInboxAction.ApproveEvent(item.id)) }) { Text("→Event") }
+                TextButton({ onAction(UiInboxAction.RequestApprove(item.id, "TASK")) }) { Text("→Task") }
+                TextButton({ onAction(UiInboxAction.RequestApprove(item.id, "EVENT")) }) { Text("→Event") }
                 TextButton({ onAction(UiInboxAction.Delete(item.id)) }) { Text("Delete") }
             }
         }
@@ -152,6 +167,28 @@ fun InboxScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ApprovalPanel(
+    approval: PendingApproval,
+    onAction: (UiInboxAction) -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { onAction(UiInboxAction.CancelApproval) },
+        title = { Text("APPROVAL REQUIRED") },
+        text = { Text("Create ${approval.kind.lowercase()}: ${approval.previewTitle}") },
+        confirmButton = {
+            Button(onClick = { onAction(UiInboxAction.ConfirmApproval(approval.id, approval.kind)) }) {
+                Text("Confirm")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = { onAction(UiInboxAction.CancelApproval) }) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

@@ -1,5 +1,11 @@
 # Roadmap
 
+The product direction and boundaries for projects, tasks, kanban, recurrence,
+local models, evolutions and Termux are defined in
+[`pip-boy-product-blueprint.md`](pip-boy-product-blueprint.md). The current
+implementation remains a vertical slice; the blueprint is not evidence that
+the later planner features already exist.
+
 Статус всех фаз — planning; выбранные реализации provisional до real-device evidence.
 
 ## P0 — research and contracts

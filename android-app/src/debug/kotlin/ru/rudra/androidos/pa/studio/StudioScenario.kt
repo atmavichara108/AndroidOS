@@ -1,6 +1,7 @@
 package ru.rudra.androidos.pa.studio
 
 import ru.rudra.androidos.pa.ui.UiInboxItem
+import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxState
 
 /** Synthetic, side-effect-free data used by the embedded UI laboratory. */
@@ -21,6 +22,7 @@ data class StudioUiState(
     val approvals: Set<String> = emptySet(),
     val recording: StudioRecording = StudioRecording.IDLE,
     val editingTranscriptId: String? = null,
+    val pendingApproval: PendingApproval? = null,
     val sync: StudioSyncState = StudioSyncState(),
 ) {
     fun toUiInboxState(): UiInboxState = UiInboxState(
@@ -29,6 +31,7 @@ data class StudioUiState(
         },
         error = error,
         isLoading = isLoading,
+        pendingApproval = pendingApproval,
     )
 }
 
@@ -59,6 +62,9 @@ sealed interface StudioAction {
     data class SaveTranscriptEdit(val id: String, val text: String) : StudioAction
     data class CancelTranscriptEdit(val id: String) : StudioAction
     data class Delete(val id: String) : StudioAction
+    data class RequestApprove(val id: String, val kind: String) : StudioAction
+    data class ConfirmApproval(val id: String, val kind: String) : StudioAction
+    data object CancelApproval : StudioAction
     data object StartSync : StudioAction
     data class ResolveConflict(val id: String, val useRemote: Boolean) : StudioAction
     data object ToggleRecording : StudioAction
@@ -93,6 +99,16 @@ fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = wh
     )
     is StudioAction.CancelTranscriptEdit -> state.copy(editingTranscriptId = null)
     is StudioAction.Delete -> state.copy(items = state.items.filterNot { it.id == action.id })
+    is StudioAction.RequestApprove -> state.copy(
+        pendingApproval = state.items.firstOrNull { it.id == action.id }?.let { item ->
+            PendingApproval(action.id, action.kind, item.transcriptText ?: item.body)
+        },
+    )
+    is StudioAction.ConfirmApproval -> state.copy(
+        pendingApproval = null,
+        approvals = state.approvals + "${action.kind.lowercase()}:${action.id}",
+    )
+    StudioAction.CancelApproval -> state.copy(pendingApproval = null)
     StudioAction.StartSync -> state.copy(
         sync = state.sync.copy(status = "CONFLICT", pendingChanges = 2, conflicts = listOf(
             StudioSyncConflict("conflict-1", "title", "Встреча сегодня", "Встреча завтра"),
