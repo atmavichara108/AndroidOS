@@ -84,6 +84,11 @@ fun StudioScreen(
                     is UiInboxAction.ApproveTask -> dispatch(StudioAction.Approve(uiAction.id, "task"))
                     is UiInboxAction.ApproveEvent -> dispatch(StudioAction.Approve(uiAction.id, "event"))
                     is UiInboxAction.Capture -> Unit
+                    is UiInboxAction.Transcribe -> dispatch(StudioAction.Transcribe(uiAction.id))
+                    is UiInboxAction.BeginTranscriptEdit -> dispatch(StudioAction.BeginTranscriptEdit(uiAction.id))
+                    is UiInboxAction.SaveTranscriptEdit -> dispatch(StudioAction.SaveTranscriptEdit(uiAction.id, uiAction.text))
+                    is UiInboxAction.CancelTranscriptEdit -> dispatch(StudioAction.CancelTranscriptEdit(uiAction.id))
+                    is UiInboxAction.Delete -> dispatch(StudioAction.Delete(uiAction.id))
                 }
             },
                 recordingLabel = if (state.error == null) state.recording.label else null,
@@ -94,6 +99,7 @@ fun StudioScreen(
                 ),
             )
             if (inspector) InspectorPanel(state, actions)
+            SyncPanel(state.sync) { action -> dispatch(action) }
             }
         }
     }
@@ -128,6 +134,27 @@ private fun InspectorPanel(state: StudioUiState, actions: List<StudioAction>) {
             Text("items = ${state.items.size}", style = MaterialTheme.typography.bodySmall)
             Text("approvals = ${state.approvals.size}; error = ${state.error}", style = MaterialTheme.typography.bodySmall)
             Text("replay = ${actions.joinToString(" > ")}", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun SyncPanel(sync: StudioSyncState, onAction: (StudioAction) -> Unit) {
+    Text("SYNC / CONFLICTS", style = MaterialTheme.typography.labelLarge)
+    Text("Status: ${sync.status} · pending: ${sync.pendingChanges}")
+    if (sync.conflicts.isEmpty()) {
+        OutlinedButton(onClick = { onAction(StudioAction.StartSync) }) { Text("Simulate sync") }
+    } else {
+        sync.conflicts.forEach { conflict ->
+            Text("${conflict.field}: ${conflict.localValue} / ${conflict.remoteValue}")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onAction(StudioAction.ResolveConflict(conflict.id, false)) }) {
+                    Text("Keep local")
+                }
+                Button(onClick = { onAction(StudioAction.ResolveConflict(conflict.id, true)) }) {
+                    Text("Use remote")
+                }
+            }
         }
     }
 }

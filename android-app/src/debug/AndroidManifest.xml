@@ -3,10 +3,6 @@
     <application>
         <activity android:name=".studio.StudioActivity" android:exported="true"
             android:label="AndroidOS Studio" android:icon="@android:drawable/ic_menu_view">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
         </activity>
     </application>
 </manifest>

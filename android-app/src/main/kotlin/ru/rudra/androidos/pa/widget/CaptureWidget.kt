@@ -21,6 +21,8 @@ import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.padding
+import androidx.glance.layout.Spacer
+import androidx.glance.layout.width
 
 class CaptureWidget : GlanceAppWidget() {
 
@@ -40,8 +42,11 @@ private fun WidgetBody() {
             .padding(8.dp)
             .cornerRadius(12.dp)
     ) {
+        Text("PIP-BOY / CAPTURE")
+        Text("VOICE INPUT")
+        Spacer(GlanceModifier.width(1.dp).padding(2.dp))
         Row {
-            WButton("Start", "start")
+            WButton("Record", "start")
             WButton("Pause", "pause")
         }
         Row {
@@ -55,6 +60,7 @@ private fun WidgetBody() {
 private fun WButton(label: String, command: String) {
     Text(
         text = label,
+        maxLines = 1,
         modifier = GlanceModifier
             .padding(4.dp)
             .clickable(

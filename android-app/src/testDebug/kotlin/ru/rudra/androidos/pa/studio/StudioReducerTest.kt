@@ -63,4 +63,37 @@ class StudioReducerTest {
         }
         assertEquals(StudioScenario.EMPTY.toUiState(), replayStudio(StudioScenario.EMPTY, emptyList()))
     }
+
+    @Test fun audioCanBeTranscribedAndEdited() {
+        val audio = StudioScenario.AUDIO.toUiState()
+        val transcribed = reduceStudio(audio, StudioAction.Transcribe("demo-audio"))
+        assertEquals("RAW", transcribed.items.single().transcriptStatus)
+        assertTrue(transcribed.items.single().transcriptText.orEmpty().isNotBlank())
+
+        val editing = reduceStudio(transcribed, StudioAction.BeginTranscriptEdit("demo-audio"))
+        assertEquals("demo-audio", editing.editingTranscriptId)
+
+        val edited = reduceStudio(
+            editing,
+            StudioAction.SaveTranscriptEdit("demo-audio", "Обсудить встречу завтра"),
+        )
+        assertEquals("EDITED", edited.items.single().transcriptStatus)
+        assertEquals("Обсудить встречу завтра", edited.items.single().transcriptText)
+        assertEquals(null, edited.editingTranscriptId)
+
+        val cancelled = reduceStudio(editing, StudioAction.CancelTranscriptEdit("demo-audio"))
+        assertEquals(null, cancelled.editingTranscriptId)
+    }
+
+    @Test fun syncConflictCanBeResolved() {
+        val conflicted = reduceStudio(StudioScenario.CAPTURED.toUiState(), StudioAction.StartSync)
+        assertEquals("CONFLICT", conflicted.sync.status)
+        assertTrue(conflicted.sync.conflicts.isNotEmpty())
+        val resolved = reduceStudio(
+            conflicted,
+            StudioAction.ResolveConflict("conflict-1", useRemote = true),
+        )
+        assertEquals("SYNCED", resolved.sync.status)
+        assertTrue(resolved.sync.conflicts.isEmpty())
+    }
 }

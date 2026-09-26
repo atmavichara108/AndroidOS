@@ -28,6 +28,7 @@ ru.rudra.androidos.pa/.studio.StudioActivity`).
 | Captured note | One normal inbox item awaiting approval | Check the everyday approval surface |
 | Long transcript | A long Russian transcript | Check wrapping and dense text |
 | Storage error | A recoverable error copy | Check failure copy and retry |
+| Audio note | An audio item waiting for transcription | Check the explicit STT flow |
 
 The selected scenario is the filled button; the others are outlined.
 
@@ -53,6 +54,21 @@ Each inbox row shows:
 - the transcript/note body,
 - two actions: `→ Task` and `→ Event`,
 - an `Approved: …` label once a destination has been approved.
+
+For an `AUDIO` item, **Transcribe** creates a synthetic RAW transcript in Studio.
+`Edit transcript` opens it for editing; changes become an `EDITED` transcript.
+The same controls are intended for the production Room/Transcriber flow.
+
+## Transcription Flow
+
+1. Select **Audio note** in Studio.
+2. Press **Transcribe** on the audio row.
+3. The row shows the synthetic RAW transcript.
+4. Press **Edit transcript**, change the text, and observe the EDITED status.
+
+Production uses the same actions but delegates the work to the selected
+`Transcriber`; Room remains the source of truth. No automatic/background
+transcription is implied by this UI.
 
 **Recordings** — a section under the note list showing finished recordings
 (`capturedLabel · size KB`). In Studio the items are synthetic and the rows are

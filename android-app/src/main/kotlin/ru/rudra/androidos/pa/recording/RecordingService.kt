@@ -91,21 +91,24 @@ class RecordingService : Service() {
         publish(stateMachine.current())
         if (result.changed) {
             stopRecorder()
-            registerAudioInboxItem()
             stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            val file = currentFile
+            val sessionId = currentSessionId
+            Thread {
+                registerAudioInboxItem(file, sessionId)
+                stopSelf()
+            }.start()
         }
     }
 
-    private fun registerAudioInboxItem() {
-        val file = currentFile ?: return
-        if (!file.exists() || file.length() == 0L) return
+    private fun registerAudioInboxItem(file: File?, sessionId: String?) {
+        if (file == null || !file.exists() || file.length() == 0L) return
         val db = PaDatabase.get(this)
         val now = Instant.now().toString()
         db.runInTransaction {
             db.inboxDao().insert(
                 InboxItemRow(
-                    id = currentSessionId ?: UUID.randomUUID().toString(),
+                    id = sessionId ?: UUID.randomUUID().toString(),
                     kind = InboxKind.AUDIO.name,
                     state = InboxState.CAPTURED.name,
                     transcriptId = null,

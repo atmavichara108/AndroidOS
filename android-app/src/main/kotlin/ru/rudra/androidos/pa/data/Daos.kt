@@ -27,6 +27,12 @@ interface InboxDao {
 
     @Query("UPDATE inbox_items SET state = :state, updatedAt = :updatedAt WHERE id = :id")
     fun updateState(id: String, state: String, updatedAt: String)
+
+    @Query("UPDATE inbox_items SET transcriptId = :transcriptId WHERE id = :id")
+    fun setTranscriptId(id: String, transcriptId: String)
+
+    @Query("UPDATE inbox_items SET deletedAt = :deletedAt, updatedAt = :deletedAt WHERE id = :id")
+    fun tombstone(id: String, deletedAt: String)
 }
 
 @Dao
@@ -36,6 +42,9 @@ interface TranscriptDao {
 
     @Query("SELECT * FROM transcripts WHERE inboxItemId = :inboxItemId AND deletedAt IS NULL")
     fun forInboxItem(inboxItemId: String): List<TranscriptRow>
+
+    @Query("UPDATE transcripts SET text = :text, status = :status, editedAt = :editedAt WHERE id = :id")
+    fun updateTextAndStatus(id: String, text: String, status: String, editedAt: String)
 }
 
 @Dao

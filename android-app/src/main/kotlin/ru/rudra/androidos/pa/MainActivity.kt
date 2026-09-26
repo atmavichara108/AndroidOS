@@ -3,6 +3,7 @@ package ru.rudra.androidos.pa
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,20 +29,27 @@ import ru.rudra.androidos.pa.data.InboxItemRow
 import ru.rudra.androidos.pa.data.PaDatabase
 import ru.rudra.androidos.pa.data.ReminderRow
 import ru.rudra.androidos.pa.data.RoomLocalStore
-import ru.rudra.androidos.pa.domain.statemachine.CaptureState
-import ru.rudra.androidos.pa.recording.RecordingBus
-import ru.rudra.androidos.pa.recording.RecordingCommands
-import ru.rudra.androidos.pa.recording.RecordingStore
+import ru.rudra.androidos.pa.data.SherpaTranscriber
+import ru.rudra.androidos.pa.data.TranscriptRow
 import ru.rudra.androidos.pa.domain.model.Change
 import ru.rudra.androidos.pa.domain.model.ChangeOperation
 import ru.rudra.androidos.pa.domain.model.InboxKind
 import ru.rudra.androidos.pa.domain.model.InboxState
 import ru.rudra.androidos.pa.domain.model.RetentionClass
+import ru.rudra.androidos.pa.domain.model.Transcript
+import ru.rudra.androidos.pa.domain.model.TranscriptStatus
+import ru.rudra.androidos.pa.domain.port.TranscriberResult
+import ru.rudra.androidos.pa.domain.statemachine.CaptureState
+import ru.rudra.androidos.pa.recording.RecordingBus
+import ru.rudra.androidos.pa.recording.RecordingCommands
+import ru.rudra.androidos.pa.recording.RecordingStore
 import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.UiInboxState
 import ru.rudra.androidos.pa.ui.UiRecording
+import java.io.File
+import android.os.Environment
 
 class MainActivity : ComponentActivity() {
 
@@ -82,6 +90,7 @@ private fun InboxScreenHost(
     val captureState by RecordingBus.state.collectAsState()
     val context = LocalContext.current
     val player = remember { android.media.MediaPlayer() }
+    val transcriber = remember { SherpaTranscriber(context) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -119,13 +128,25 @@ private fun InboxScreenHost(
         }.start()
     }
 
+    var transcribingIds by remember { mutableStateOf(emptySet<String>()) }
+    var editingIds by remember { mutableStateOf(emptySet<String>()) }
+
     fun toUiState(rows: List<InboxItemRow>) = UiInboxState(
         items = rows.map { r ->
+            val transcript = r.transcriptId?.let { tid ->
+                db.transcriptDao().forInboxItem(r.id).lastOrNull { it.id == tid }
+                    ?: db.transcriptDao().forInboxItem(r.id).lastOrNull()
+            }
             UiInboxItem(
                 id = r.id,
                 body = r.body.orEmpty(),
                 stateLabel = r.state,
                 capturedLabel = r.capturedAt.drop(11).take(8),
+                kind = r.kind,
+                transcriptText = transcript?.text,
+                transcriptStatus = transcript?.status,
+                isTranscribing = r.id in transcribingIds,
+                isTranscriptEditing = r.id in editingIds,
             )
         },
     )
@@ -151,6 +172,47 @@ private fun InboxScreenHost(
                 is UiInboxAction.Capture -> capture(db, store, deviceId, action.text) { reload() }
                 is UiInboxAction.ApproveTask -> approve(db, store, deviceId, action.id, "TASK") { reload() }
                 is UiInboxAction.ApproveEvent -> approve(db, store, deviceId, action.id, "EVENT") { reload() }
+                is UiInboxAction.BeginTranscriptEdit -> {
+                    editingIds = editingIds + action.id
+                    reload()
+                }
+                is UiInboxAction.SaveTranscriptEdit -> {
+                    editingIds = editingIds - action.id
+                    saveTranscriptEdit(db, action.id, action.text) { reload() }
+                }
+                is UiInboxAction.CancelTranscriptEdit -> {
+                    editingIds = editingIds - action.id
+                    reload()
+                }
+                is UiInboxAction.Transcribe -> {
+                    if (action.id in transcribingIds) return@InboxScreen
+                    transcribingIds = transcribingIds + action.id
+                    reload()
+                    val recordingsDir = if (Build.VERSION.SDK_INT >= 31) {
+                        context.getExternalFilesDir(Environment.DIRECTORY_RECORDINGS)
+                    } else {
+                        null
+                    } ?: context.filesDir
+                    val sttDir = context.getExternalFilesDir(null)?.resolve("stt/t-one")
+                    Thread {
+                        val row = db.inboxDao().byId(action.id)
+                        val audioPath = row?.body?.let { body ->
+                            File(recordingsDir, body).takeIf { it.exists() }
+                                ?: sttDir?.resolve(body)?.takeIf { it.exists() }
+                        }
+                        val result = when {
+                            row == null -> TranscriberResult.Error("inbox item missing")
+                            audioPath == null -> TranscriberResult.Error("audio file not found for ${row.body}")
+                            else -> transcriber.transcribe(audioPath.absolutePath, listOf("ru"))
+                        }
+                        if (result is TranscriberResult.Ok) {
+                            storeTranscript(db, store, action.id, result.transcript)
+                        }
+                        transcribingIds = transcribingIds - action.id
+                        reload()
+                    }.start()
+                }
+                is UiInboxAction.Delete -> deleteInboxItem(db, store, deviceId, context, action.id) { reload() }
             }
         },
         itemExtra = { item -> ReminderTextRow(db, item.id) },
@@ -169,6 +231,9 @@ private fun InboxScreenHost(
         },
         recordings = recordings,
         onPlay = { rec -> play(rec) },
+        onDeleteRecording = { rec ->
+            deleteRecordingFile(context, rec) { reload() }
+        },
     )
 }
 
@@ -231,6 +296,125 @@ private fun ReminderTextRow(db: PaDatabase, targetId: String) {
         }
     }
     reminderText?.let { Text(it) }
+}
+
+private fun storeTranscript(
+    db: PaDatabase,
+    store: RoomLocalStore,
+    inboxItemId: String,
+    transcript: Transcript,
+) {
+    val now = Instant.now().toString()
+    db.runInTransaction {
+        db.transcriptDao().insert(
+            TranscriptRow(
+                id = transcript.id,
+                inboxItemId = inboxItemId,
+                text = transcript.text,
+                engineId = transcript.engineId,
+                modelId = transcript.modelId,
+                status = transcript.status.name,
+                editedAt = null,
+                retentionClass = transcript.retentionClass.name,
+                version = 1,
+                deletedAt = null,
+            )
+        )
+        db.inboxDao().updateState(inboxItemId, InboxState.TRANSCRIBED.name, now)
+        db.inboxDao().setTranscriptId(inboxItemId, transcript.id)
+        store.applyChange(
+            Change(
+                id = UUID.randomUUID().toString(),
+                entityId = inboxItemId,
+                operation = ChangeOperation.UPDATE,
+                patch = mapOf("transcriptId" to transcript.id, "state" to InboxState.TRANSCRIBED.name),
+                actorDeviceId = transcript.provenance.firstOrNull()?.actor ?: "unknown",
+                baseVersion = null,
+                occurredAt = now,
+                logicalClock = null,
+                idempotencyKey = UUID.randomUUID().toString(),
+                provenance = emptyList(),
+                retentionClass = RetentionClass.TEMPORARY_TRANSCRIPT,
+            )
+        )
+    }
+}
+
+private fun saveTranscriptEdit(
+    db: PaDatabase,
+    inboxItemId: String,
+    newText: String,
+    onDone: () -> Unit,
+) {
+    Thread {
+        val now = Instant.now().toString()
+        db.runInTransaction {
+            val current = db.transcriptDao().forInboxItem(inboxItemId).lastOrNull()
+            current?.let {
+                db.transcriptDao().updateTextAndStatus(
+                    id = it.id,
+                    text = newText,
+                    status = TranscriptStatus.EDITED.name,
+                    editedAt = now,
+                )
+            }
+        }
+        onDone()
+    }.start()
+}
+
+private fun deleteInboxItem(
+    db: PaDatabase,
+    store: RoomLocalStore,
+    deviceId: String,
+    context: Context,
+    id: String,
+    onDone: () -> Unit,
+) {
+    Thread {
+        val now = Instant.now().toString()
+        db.runInTransaction {
+            val row = db.inboxDao().byId(id)
+            db.inboxDao().tombstone(id, now)
+            store.applyChange(
+                Change(
+                    id = UUID.randomUUID().toString(),
+                    entityId = id,
+                    operation = ChangeOperation.TOMBSTONE,
+                    patch = mapOf("deletedAt" to now),
+                    actorDeviceId = deviceId,
+                    baseVersion = row?.version,
+                    occurredAt = now,
+                    logicalClock = null,
+                    idempotencyKey = UUID.randomUUID().toString(),
+                    provenance = emptyList(),
+                    retentionClass = RetentionClass.PERMANENT,
+                )
+            )
+            if (row?.kind == InboxKind.AUDIO.name) {
+                row.body?.let { name ->
+                    val dir = if (Build.VERSION.SDK_INT >= 31) {
+                        context.getExternalFilesDir(Environment.DIRECTORY_RECORDINGS)
+                    } else {
+                        null
+                    } ?: context.filesDir
+                    val f = File(dir, name)
+                    if (f.exists()) f.delete()
+                }
+            }
+        }
+        onDone()
+    }.start()
+}
+
+private fun deleteRecordingFile(context: Context, rec: UiRecording, onDone: () -> Unit) {
+    Thread {
+        runCatching {
+            val f = File(rec.path)
+            if (f.exists()) f.delete()
+        }
+        onDone()
+    }.start()
 }
 
 private fun approve(

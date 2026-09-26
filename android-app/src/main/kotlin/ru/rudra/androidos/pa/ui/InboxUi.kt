@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -24,6 +26,11 @@ data class UiInboxItem(
     val body: String,
     val stateLabel: String,
     val capturedLabel: String,
+    val kind: String = "TEXT",
+    val transcriptText: String? = null,
+    val transcriptStatus: String? = null,
+    val isTranscribing: Boolean = false,
+    val isTranscriptEditing: Boolean = false,
 )
 
 data class UiInboxState(
@@ -36,6 +43,11 @@ sealed interface UiInboxAction {
     data class ApproveTask(val id: String) : UiInboxAction
     data class ApproveEvent(val id: String) : UiInboxAction
     data class Capture(val text: String) : UiInboxAction
+    data class Transcribe(val id: String) : UiInboxAction
+    data class BeginTranscriptEdit(val id: String) : UiInboxAction
+    data class SaveTranscriptEdit(val id: String, val text: String) : UiInboxAction
+    data class CancelTranscriptEdit(val id: String) : UiInboxAction
+    data class Delete(val id: String) : UiInboxAction
 }
 
 /** Clean UI record of a finished recording; hosts map their store type into it. */
@@ -54,11 +66,12 @@ fun InboxScreen(
     onRecord: (() -> Unit)? = null,
     recordings: List<UiRecording> = emptyList(),
     onPlay: ((UiRecording) -> Unit)? = null,
+    onDeleteRecording: ((UiRecording) -> Unit)? = null,
 ) {
     var text by remember { mutableStateOf("") }
     val hasRecord = recordingLabel != null && onRecord != null
 
-    Column(Modifier.padding(16.dp)) {
+    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -103,10 +116,22 @@ fun InboxScreen(
             Row(Modifier.padding(top = 4.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text("${item.capturedLabel} ${item.body}")
+                    if (item.kind == "AUDIO") {
+                        item.transcriptText?.let { transcript ->
+                            TranscriptEditor(item, transcript, onAction)
+                        } ?: if (item.isTranscribing) {
+                            Text("Transcribing…")
+                        } else {
+                            OutlinedButton(
+                                onClick = { onAction(UiInboxAction.Transcribe(item.id)) },
+                            ) { Text("Transcribe") }
+                        }
+                    }
                     itemExtra(item)
                 }
                 TextButton({ onAction(UiInboxAction.ApproveTask(item.id)) }) { Text("→Task") }
                 TextButton({ onAction(UiInboxAction.ApproveEvent(item.id)) }) { Text("→Event") }
+                TextButton({ onAction(UiInboxAction.Delete(item.id)) }) { Text("Delete") }
             }
         }
         if (recordings.isNotEmpty()) {
@@ -120,7 +145,41 @@ fun InboxScreen(
                     val kb = rec.sizeBytes / 1024
                     Text("${rec.label} · ${kb} KB", Modifier.fillMaxWidth(1f))
                 }
+                TextButton(
+                    onClick = { onDeleteRecording?.invoke(rec) },
+                    enabled = onDeleteRecording != null,
+                ) { Text("Delete") }
             }
+        }
+    }
+}
+
+@Composable
+private fun TranscriptEditor(
+    item: UiInboxItem,
+    transcript: String,
+    onAction: (UiInboxAction) -> Unit,
+) {
+    var draft by remember(item.id, transcript) { mutableStateOf(transcript) }
+    if (item.isTranscriptEditing) {
+        TextField(
+            value = draft,
+            onValueChange = { draft = it },
+            label = { Text("Transcript ${item.transcriptStatus ?: ""}".trim()) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onAction(UiInboxAction.SaveTranscriptEdit(item.id, draft)) }) {
+                Text("Save")
+            }
+            OutlinedButton(onClick = { onAction(UiInboxAction.CancelTranscriptEdit(item.id)) }) {
+                Text("Cancel")
+            }
+        }
+    } else {
+        Text("Transcript ${item.transcriptStatus ?: ""}: $transcript")
+        TextButton({ onAction(UiInboxAction.BeginTranscriptEdit(item.id)) }) {
+            Text("Edit transcript")
         }
     }
 }

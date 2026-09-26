@@ -59,5 +59,8 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
+    // [проверить] STT provisional per docs/research/stt-engine-selection.md
+    implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.5")
+
     testImplementation("junit:junit:4.13.2")
 }
