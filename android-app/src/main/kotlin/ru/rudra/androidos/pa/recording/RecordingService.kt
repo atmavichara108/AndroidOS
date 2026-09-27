@@ -33,6 +33,12 @@ class RecordingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // startForeground must be called unconditionally and immediately when
+        // the service is started via startForegroundService, otherwise the
+        // 5-second watchdog kills the process with
+        // ForegroundServiceDidNotStartInTimeException (a no-op command like a
+        // redundant Stop used to leave the service foreground-less and crash).
+        startForegroundCompat()
         val command = intent?.getStringExtra(KEY_COMMAND)
         when (command) {
             "start" -> onStart()
@@ -91,13 +97,17 @@ class RecordingService : Service() {
         publish(stateMachine.current())
         if (result.changed) {
             stopRecorder()
-            stopForeground(STOP_FOREGROUND_REMOVE)
             val file = currentFile
             val sessionId = currentSessionId
             Thread {
                 registerAudioInboxItem(file, sessionId)
                 stopSelf()
             }.start()
+        } else {
+            // No active recording — nothing to flush; clear the foreground
+            // notification we just posted and stop immediately.
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
     }
 
@@ -144,8 +154,16 @@ class RecordingService : Service() {
     }
 
     private fun stopRecorder() {
-        recorder?.stop()
-        recorder?.release()
+        try {
+            recorder?.stop()
+        } catch (e: RuntimeException) {
+            android.util.Log.w("PA_RECORD", "MediaRecorder.stop failed (recording may not be active)", e)
+        }
+        try {
+            recorder?.release()
+        } catch (e: RuntimeException) {
+            android.util.Log.w("PA_RECORD", "MediaRecorder.release failed", e)
+        }
         recorder = null
     }
 

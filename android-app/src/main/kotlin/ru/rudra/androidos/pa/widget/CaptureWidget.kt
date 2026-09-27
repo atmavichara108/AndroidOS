@@ -7,6 +7,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.text.Text
+import androidx.glance.text.TextStyle
+import androidx.glance.text.FontWeight
+import androidx.glance.unit.ColorProvider
+import androidx.compose.ui.unit.sp
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
 import androidx.glance.action.clickable
@@ -42,14 +46,24 @@ private fun WidgetBody() {
             .padding(8.dp)
             .cornerRadius(12.dp)
     ) {
-        Text("PIP-BOY / CAPTURE")
-        Text("VOICE INPUT")
-        Spacer(GlanceModifier.width(1.dp).padding(2.dp))
+        Text(
+            text = "PIP-BOY / CAPTURE",
+            style = TextStyle(
+                color = ColorProvider(Color(0xFFFFB300)),
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+            ),
+        )
+        Text(
+            text = "VOICE INPUT",
+            style = TextStyle(color = ColorProvider(Color(0xFF9E9E9E)), fontSize = 11.sp),
+            modifier = GlanceModifier.padding(bottom = 6.dp),
+        )
         Row {
             WButton("Record", "start")
             WButton("Pause", "pause")
         }
-        Row {
+        Row(modifier = GlanceModifier.padding(top = 4.dp)) {
             WButton("Resume", "resume")
             WButton("Stop", "stop")
         }
@@ -61,13 +75,21 @@ private fun WButton(label: String, command: String) {
     Text(
         text = label,
         maxLines = 1,
+        style = TextStyle(
+            color = ColorProvider(Color(0xFFEAEAEA)),
+            fontWeight = FontWeight.Medium,
+            fontSize = 13.sp,
+        ),
         modifier = GlanceModifier
-            .padding(4.dp)
+            .padding(start = 2.dp, end = 2.dp)
+            .background(Color(0xFF33323A))
+            .cornerRadius(6.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
             .clickable(
                 actionRunCallback<WidgetCommandAction>(
                     actionParametersOf(WidgetCommandAction.COMMAND to command)
                 )
-            )
+            ),
     )
 }
 
