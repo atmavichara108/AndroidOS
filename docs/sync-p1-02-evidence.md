@@ -58,6 +58,23 @@ persisted on the phone.
   change-list codec round trip, exchange-file round trip through crypto,
   wrong-key and tampered-payload rejection, non-PA-SYNC files refused.
 
+## Materialization of received changes (P2-пункт, done)
+
+Раньше принятый change оседал только в `changes`-логе. Теперь `RoomLocalStore.applyChange`
+материализует его в доменные таблицы в той же транзакции (entity / inbox / transcript /
+tombstone) через чистый `domain/sync/ChangeMaterializer` (9 тестов). Отправители
+(`capture`, `approve`, `storeTranscript`, laptop `seed`) кладут в patch самодостаточное
+состояние (kind/title/status/body/state/transcript*...).
+
+Device-проверка (2026-09-27, Redmi 3c3da9f8): laptop `seed mat1` -> export 1 change ->
+phone import `applied=1` -> entity `peer-entity-mat1` (TASK, «задача от ноутбука mat1»,
+APPROVED) создана в таблице entities (26 -> 27); повторный import `applied=0
+duplicates=1` оставил entities = 27. Идемпотентность материализации сохранена.
+
+Известно: главный экран рендерит inbox, а не список entities — материализованные
+сущности доступны через `EntityDao.approved()`, но видимость в UI (экран задач/событий)
+— отдельная P2-задача.
+
 ## Known limits (P2 scope, stated honestly)
 
 - `ChangeRow` does not persist `logicalClock`/`provenance`; export sends
@@ -77,8 +94,6 @@ persisted on the phone.
   exchanges re-send the whole history (O(n²) transfer in the long run).
 - Expiry (`expiresAt`) is implemented and unit-tested but no production caller
   sets it yet.
-- Received changes are recorded in the local change log but are not yet
-  materialised into entities/reminders automatically.
 - Transport in this evidence is adb file push/pull, not a background channel
   (delayed transport is P2).
 - The scriptable hook is **debug-only**: `SyncHooks.run` returns

@@ -60,6 +60,9 @@ interface EntityDao {
 
     @Query("SELECT * FROM entities WHERE id = :id")
     fun byId(id: String): EntityRow?
+
+    @Query("UPDATE entities SET deletedAt = :deletedAt WHERE id = :id")
+    fun tombstone(id: String, deletedAt: String)
 }
 
 @Dao

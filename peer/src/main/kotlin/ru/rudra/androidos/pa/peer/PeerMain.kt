@@ -111,7 +111,11 @@ private fun seed(stateDir: File, idSuffix: String) {
             id = "peer-seed-$idSuffix",
             entityId = "peer-entity-$idSuffix",
             operation = ChangeOperation.CREATE,
-            patch = mapOf("title" to "задача от ноутбука $idSuffix"),
+            patch = mapOf(
+                "kind" to "TASK",
+                "title" to "задача от ноутбука $idSuffix",
+                "status" to "APPROVED",
+            ),
             actorDeviceId = "laptop-peer",
             baseVersion = null,
             occurredAt = java.time.Instant.now().toString(),
