@@ -6,6 +6,8 @@ import ru.rudra.androidos.pa.domain.model.ChangeOperation
 import ru.rudra.androidos.pa.domain.model.RetentionClass
 import ru.rudra.androidos.pa.domain.port.LocalStore
 import ru.rudra.androidos.pa.domain.sync.ChangeMaterializer
+import ru.rudra.androidos.pa.domain.sync.ConflictOutcome
+import ru.rudra.androidos.pa.domain.sync.ConflictPolicy
 import ru.rudra.androidos.pa.domain.sync.MaterializeOp
 
 /**
@@ -32,9 +34,11 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
     fun allChanges(): List<Change> = db.changeDao().all().map { it.toChange() }
 
     private fun materialize(change: Change) {
+        val conflictPolicy = ConflictPolicy()
         when (val op = ChangeMaterializer.materialize(change)) {
             is MaterializeOp.UpsertEntity -> {
-                if (db.entityDao().byId(op.id) == null) {
+                val existing = db.entityDao().byId(op.id)
+                if (existing == null) {
                     db.entityDao().insert(
                         EntityRow(
                             id = op.id,
@@ -46,10 +50,28 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
                             deletedAt = null,
                         )
                     )
+                } else {
+                    when (val outcome = conflictPolicy.decide(change, existing.version)) {
+                        is ConflictOutcome.Accepted -> {
+                            // Real UPDATE (not IGNORE insert) so the version and
+                            // incoming fields actually apply to the existing row.
+                            db.entityDao().updateFields(
+                                id = op.id,
+                                type = op.kind,
+                                attributesJson = JSONObject(mapOf("title" to op.title)).toString(),
+                                status = op.status,
+                                version = outcome.nextVersion,
+                            )
+                        }
+                        is ConflictOutcome.Loser -> {
+                            android.util.Log.w("PA_SYNC", "conflict: entity ${op.id} not updated (${outcome.reason})")
+                        }
+                    }
                 }
             }
             is MaterializeOp.UpsertInbox -> {
-                if (db.inboxDao().byId(op.id) == null) {
+                val existing = db.inboxDao().byId(op.id)
+                if (existing == null) {
                     db.inboxDao().insert(
                         InboxItemRow(
                             id = op.id,
@@ -66,11 +88,33 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
                             deletedAt = null,
                         )
                     )
+                } else {
+                    when (val outcome = conflictPolicy.decide(change, existing.version)) {
+                        is ConflictOutcome.Accepted -> {
+                            // Real UPDATE (not IGNORE insert) so version and fields
+                            // apply; keep local capturedAt/createdAt, bump updatedAt.
+                            db.inboxDao().updateFields(
+                                id = op.id,
+                                kind = op.kind,
+                                state = op.state,
+                                transcriptId = op.transcriptId,
+                                body = op.body,
+                                sourceDeviceId = op.sourceDeviceId,
+                                updatedAt = op.updatedAt,
+                                retentionClass = op.retentionClass,
+                                version = outcome.nextVersion,
+                            )
+                        }
+                        is ConflictOutcome.Loser -> {
+                            android.util.Log.w("PA_SYNC", "conflict: inbox ${op.id} not updated (${outcome.reason})")
+                        }
+                    }
                 }
             }
             is MaterializeOp.UpsertTranscript -> {
                 val existing = db.transcriptDao().forInboxItem(op.inboxItemId)
                     .firstOrNull { it.id == op.id }
+                var accepted = false
                 if (existing == null) {
                     db.transcriptDao().insert(
                         TranscriptRow(
@@ -87,13 +131,32 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
                         )
                     )
                     db.inboxDao().setTranscriptId(op.inboxItemId, op.id)
+                    accepted = true
+                } else {
+                    when (val outcome = conflictPolicy.decide(change, existing.version)) {
+                        is ConflictOutcome.Accepted -> {
+                            db.transcriptDao().updateTextStatusVersion(
+                                id = op.id,
+                                text = op.text,
+                                status = op.status,
+                                editedAt = change.occurredAt,
+                                version = outcome.nextVersion,
+                            )
+                            accepted = true
+                        }
+                        is ConflictOutcome.Loser -> {
+                            android.util.Log.w("PA_SYNC", "conflict: transcript ${op.id} not updated (${outcome.reason})")
+                        }
+                    }
                 }
                 // A peer-originated transcript must also carry its inbox state
                 // transition (e.g. CAPTURED -> TRANSCRIBED), which the sender
-                // includes as patch["state"]. Apply it when present.
-                change.patch["state"]?.let { state ->
-                    val now = change.occurredAt
-                    db.inboxDao().updateState(op.inboxItemId, state, now)
+                // includes as patch["state"]. Apply it only when the transcript
+                // was actually accepted, never on a losing edit.
+                if (accepted) {
+                    change.patch["state"]?.let { state ->
+                        db.inboxDao().updateState(op.inboxItemId, state, change.occurredAt)
+                    }
                 }
             }
             is MaterializeOp.Tombstone -> {

@@ -34,6 +34,19 @@ interface InboxDao {
     @Query("UPDATE inbox_items SET transcriptId = :transcriptId WHERE id = :id")
     fun setTranscriptId(id: String, transcriptId: String)
 
+    @Query("UPDATE inbox_items SET kind = :kind, state = :state, transcriptId = :transcriptId, body = :body, sourceDeviceId = :sourceDeviceId, updatedAt = :updatedAt, retentionClass = :retentionClass, version = :version WHERE id = :id")
+    fun updateFields(
+        id: String,
+        kind: String,
+        state: String,
+        transcriptId: String?,
+        body: String?,
+        sourceDeviceId: String,
+        updatedAt: String,
+        retentionClass: String,
+        version: Long,
+    )
+
     @Query("UPDATE inbox_items SET deletedAt = :deletedAt, updatedAt = :deletedAt WHERE id = :id")
     fun tombstone(id: String, deletedAt: String)
 }
@@ -48,6 +61,9 @@ interface TranscriptDao {
 
     @Query("UPDATE transcripts SET text = :text, status = :status, editedAt = :editedAt WHERE id = :id")
     fun updateTextAndStatus(id: String, text: String, status: String, editedAt: String)
+
+    @Query("UPDATE transcripts SET text = :text, status = :status, editedAt = :editedAt, version = :version WHERE id = :id")
+    fun updateTextStatusVersion(id: String, text: String, status: String, editedAt: String, version: Long)
 }
 
 @Dao
@@ -60,6 +76,9 @@ interface EntityDao {
 
     @Query("SELECT * FROM entities WHERE id = :id")
     fun byId(id: String): EntityRow?
+
+    @Query("UPDATE entities SET type = :type, attributesJson = :attributesJson, status = :status, version = :version WHERE id = :id")
+    fun updateFields(id: String, type: String, attributesJson: String, status: String, version: Long)
 
     @Query("UPDATE entities SET deletedAt = :deletedAt WHERE id = :id")
     fun tombstone(id: String, deletedAt: String)

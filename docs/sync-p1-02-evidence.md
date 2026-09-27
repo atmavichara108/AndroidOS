@@ -57,12 +57,15 @@ persisted on the phone.
 - `domain/src/test/.../sync/EnvelopeCodecTest.kt` (6 tests): envelope and
   change-list codec round trip, exchange-file round trip through crypto,
   wrong-key and tampered-payload rejection, non-PA-SYNC files refused.
+- `domain/src/test/.../sync/ConflictPolicyTest.kt` (6 tests): optimistic
+  concurrency decide() across all branches (no-version, matching base, null
+  base, stale base -> Loser, ahead base -> catch up, create-on-missing).
 
 ## Materialization of received changes (P2-пункт, done)
 
 Раньше принятый change оседал только в `changes`-логе. Теперь `RoomLocalStore.applyChange`
 материализует его в доменные таблицы в той же транзакции (entity / inbox / transcript /
-tombstone) через чистый `domain/sync/ChangeMaterializer` (9 тестов). Отправители
+tombstone) через чистый `domain/sync/ChangeMaterializer` (12 тестов). Отправители
 (`capture`, `approve`, `storeTranscript`, laptop `seed`) кладут в patch самодостаточное
 состояние (kind/title/status/body/state/transcript*...).
 
@@ -75,6 +78,27 @@ duplicates=1` оставил entities = 27. Идемпотентность ма�
 сущности доступны через `EntityDao.approved()`, но видимость в UI (экран задач/событий)
 — отдельная P2-задача.
 
+## P2-пункт: conflict policy по baseVersion (done)
+
+Optimistic-concurrency конфликт-политика: per-entity version counter. При
+материализации изменения над существующей строкой `RoomLocalStore` сверяет
+`change.baseVersion` с текущей версией через чистый `domain/sync/ConflictPolicy`
+(6 тестов): совпадение -> применить и инкрементировать; устаревшая база -> Loser
+(строка не перезаписывается, но change остаётся в append-only логе — история
+конфликта сохранена, без слепого last-writer-wins). CREATE/новые строки -> version=1.
+`ChangeMaterializer.update` теперь распознаёт и entity-UPDATE (kind/title/status),
+не только транскрипт (11 тестов materializer).
+
+Device-проверка (2026-09-27, Redmi 3c3da9f8), оба пути:
+- Loser: CREATE entity `peer-entity-new1` (version=1) -> UPDATE c устаревшим
+  baseVersion=0 -> лог `conflict: entity peer-entity-new1 not updated (stale
+  base 0 vs current 1)`; title остался «задача от ноутбука new1», version=1,
+  проигравший change записан в лог (2 changes). История конфликта сохранена.
+- Accepted: UPDATE c валидным baseVersion=1 -> title применён
+  «ПЕРЕЗАПИСЬ-ВАЛИДНАЯ», version вырос 1 -> 2. Принятое обновление
+  материализуется и счётчик версии продвигается (реальный UPDATE, а не
+  IGNORE-insert).
+
 ## Known limits (P2 scope, stated honestly)
 
 - `ChangeRow` does not persist `logicalClock`/`provenance`; export sends
@@ -85,9 +109,6 @@ duplicates=1` оставил entities = 27. Идемпотентность ма�
 - Keys: PBKDF2 uses a fixed, non-secret salt derived from the keyId, so two
   installs with the same passphrase derive the same keys and weak passphrases
   are precomputable. Real pairing/revocation and per-device salts are P2.
-- No conflict resolution: two changes touching the same field are both
-  applied (append-both), `baseVersion` is ignored, and ordering relies on
-  wall-clock `occurredAt`. Deterministic, but not a conflict policy — P2.
 - The plaintext routing header (id/sender/sequence/keyId) is not covered by
   the MAC and must be treated as untrusted display metadata.
 - The peer's change log grows without a watermark or compaction, so repeated

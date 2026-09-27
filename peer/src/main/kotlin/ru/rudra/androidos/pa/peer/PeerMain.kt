@@ -129,6 +129,39 @@ private fun seed(stateDir: File, idSuffix: String) {
     println("seeded peer-seed-$idSuffix (total ${changes.size} change(s))")
 }
 
+/** Test helper: append a conflict-injecting UPDATE change for an existing
+ * entity with an explicit (possibly stale) baseVersion. */
+private fun seedUpdate(stateDir: File, entityId: String, baseVersion: Long, title: String) {
+    val store = PeerStore(stateDir)
+    val changes = store.loadChanges()
+    val id = "peer-update-$entityId-$baseVersion"
+    if (changes.any { it.id == id }) {
+        println("seedUpdate $id already present")
+        return
+    }
+    changes.add(
+        Change(
+            id = id,
+            entityId = entityId,
+            operation = ChangeOperation.UPDATE,
+            patch = mapOf(
+                "kind" to "TASK",
+                "title" to title,
+                "status" to "APPROVED",
+            ),
+            actorDeviceId = "laptop-peer",
+            baseVersion = baseVersion,
+            occurredAt = java.time.Instant.now().toString(),
+            logicalClock = null,
+            idempotencyKey = "peer-update-key-$entityId-$baseVersion",
+            provenance = emptyList(),
+            retentionClass = RetentionClass.PERMANENT,
+        )
+    )
+    store.saveChanges(changes)
+    println("seeded $id (base=$baseVersion) for entity=$entityId title='$title' (total ${changes.size})")
+}
+
 private fun show(file: File) {
     val header = ExchangeFile.readHeader(file) ?: error("not a PA-SYNC file: $file")
     println("id=${header.id}")
@@ -192,6 +225,7 @@ fun main(args: Array<String>) {
         "show" -> show(File(args[1]))
         "selftest" -> selftest(File(args[1]), keyId)
         "seed" -> seed(File(args[1]), args[2])
+        "seedupdate" -> seedUpdate(File(args[1]), args[2], args[3].toLong(), args[4])
         else -> {
             println("unknown command ${args[0]}")
             kotlin.system.exitProcess(1)

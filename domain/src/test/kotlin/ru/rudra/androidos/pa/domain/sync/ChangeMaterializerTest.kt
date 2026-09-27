@@ -139,6 +139,30 @@ fun `transcript update materializes text and status`() {
         assertTrue(op is MaterializeOp.Unsupported)
     }
 
+@Test
+fun `entity update materializes from kind and title`() {
+        val op = ChangeMaterializer.materialize(
+            change(
+                ChangeOperation.UPDATE,
+                "peer-entity-con2",
+                mapOf("kind" to "TASK", "title" to "ЗАДАЧА-ПЕРЕЗАПИСЬ", "status" to "APPROVED")
+            )
+        )
+        assertEquals(MaterializeOp.UpsertEntity("peer-entity-con2", "TASK", "ЗАДАЧА-ПЕРЕЗАПИСЬ", "APPROVED"), op)
+    }
+
+    @Test
+    fun `inbox update with kind TEXT does not route to entity`() {
+        val op = ChangeMaterializer.materialize(
+            change(
+                ChangeOperation.UPDATE,
+                "in-9",
+                mapOf("kind" to InboxKind.TEXT.name, "state" to InboxState.CAPTURED.name)
+            )
+        )
+        assertTrue(op is MaterializeOp.Unsupported)
+    }
+
     @Test
     fun `delete operation is unsupported by PA`() {
         val op = ChangeMaterializer.materialize(change(ChangeOperation.DELETE, "x", emptyMap()))

@@ -117,11 +117,14 @@ object ChangeMaterializer {
                     status = p["transcriptStatus"] ?: "RAW",
                 )
             }
-            // An inbox row update (e.g. state/transcriptId link).
-            p.containsKey("state") -> MaterializeOp.Unsupported(
-                change.id, "inbox UPDATE needs materialization of full row; re-encoded as CREATE"
+            // An entity title/status edit, but only for non-inbox kinds.
+            p.containsKey("kind") && p["kind"] !in INBOX_KINDS -> MaterializeOp.UpsertEntity(
+                id = change.entityId,
+                kind = p["kind"] ?: "",
+                title = p["title"] ?: "",
+                status = p["status"] ?: "APPROVED",
             )
-            else -> MaterializeOp.Unsupported(change.id, "UPDATE with no transcript fields")
+            else -> MaterializeOp.Unsupported(change.id, "UPDATE with no recognized fields")
         }
     }
 

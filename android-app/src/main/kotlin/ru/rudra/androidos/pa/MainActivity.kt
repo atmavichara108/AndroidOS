@@ -356,6 +356,7 @@ private fun storeTranscript(
     transcript: Transcript,
 ) {
     val now = Instant.now().toString()
+    val baseVersion = db.inboxDao().byId(inboxItemId)?.version
     db.runInTransaction {
         db.transcriptDao().insert(
             TranscriptRow(
@@ -385,7 +386,7 @@ private fun storeTranscript(
                     "state" to InboxState.TRANSCRIBED.name,
                 ),
                 actorDeviceId = transcript.provenance.firstOrNull()?.actor ?: "unknown",
-                baseVersion = null,
+                baseVersion = baseVersion,
                 occurredAt = now,
                 logicalClock = null,
                 idempotencyKey = UUID.randomUUID().toString(),
