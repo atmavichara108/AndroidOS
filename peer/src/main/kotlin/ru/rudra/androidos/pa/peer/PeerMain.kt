@@ -39,6 +39,9 @@ class PeerStore(private val dir: File) : LocalStore {
     private val appliedFile = File(dir, "applied.txt")
     private val applied: MutableSet<String> =
         if (appliedFile.exists()) appliedFile.readLines().toMutableSet() else mutableSetOf()
+    private val ackedFile = File(dir, "acked.txt")
+    private val acked: MutableSet<String> =
+        if (ackedFile.exists()) ackedFile.readLines().toMutableSet() else mutableSetOf()
 
     override fun applyChange(change: Change): Boolean {
         val fresh = applied.add(change.idempotencyKey)
@@ -51,6 +54,34 @@ class PeerStore(private val dir: File) : LocalStore {
 
     fun appliedKeys(): Set<String> = applied.toSet()
 
+    fun ack(keys: Set<String>): Int {
+        var newly = 0
+        for (k in keys) {
+            if (acked.add(k)) newly++
+        }
+        if (newly > 0) {
+            dir.mkdirs()
+            // Atomic temp+rename; fall back to Files.move ATOMIC_MOVE if the
+            // plain renameTo path fails (renameTo is non-replacing on some
+            // filesystems when the target exists).
+            val tmp = File(dir, "acked.txt.tmp")
+            tmp.writeText(acked.joinToString("\n") + "\n")
+            val renamed = try {
+                java.nio.file.Files.move(
+                    tmp.toPath(), ackedFile.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                ); true
+            } catch (e: Exception) {
+                tmp.renameTo(ackedFile)
+            }
+            if (!renamed) ackedFile.writeText(acked.joinToString("\n") + "\n")
+        }
+        return newly
+    }
+
+    fun ackedKeys(): Set<String> = acked.toSet()
+
     fun loadChanges(): MutableList<Change> {
         val file = File(dir, "changes.bin")
         if (!file.exists()) return mutableListOf()
@@ -60,6 +91,30 @@ class PeerStore(private val dir: File) : LocalStore {
     fun saveChanges(changes: List<Change>) {
         dir.mkdirs()
         File(dir, "changes.bin").writeBytes(EnvelopeCodec.encodeChanges(changes))
+    }
+
+    /**
+     * Moves acked changes out of the live pending log into a separate
+     * compacted history (their provenance is preserved for audit) and rewrites
+     * changes.bin with only the still-pending changes. Idempotent; acked keys
+     * are already persisted in acked.txt, so a crash mid-compaction can only
+     * re-send already-delivered changes (harmless).
+     */
+    fun compactInto(ackedKeys: Set<String>) {
+        val all = loadChanges()
+        val pending = all.filter { it.idempotencyKey !in ackedKeys }
+        if (pending.size != all.size) {
+            saveChanges(pending)
+            val compactedFile = File(dir, "compacted.bin")
+            val ackedChanges = all.filter { it.idempotencyKey in ackedKeys }
+            if (compactedFile.exists()) {
+                val prior = EnvelopeCodec.decodeChanges(compactedFile.readBytes())
+                val merged = (prior + ackedChanges).distinctBy { it.idempotencyKey }
+                compactedFile.writeBytes(EnvelopeCodec.encodeChanges(merged))
+            } else {
+                compactedFile.writeBytes(EnvelopeCodec.encodeChanges(ackedChanges))
+            }
+        }
     }
 }
 
@@ -105,16 +160,22 @@ private fun revoke(stateDir: File, partnerId: String) {
 private fun export(outFile: File, stateDir: File, keyId: String) {
     val engine = SyncEngine(deviceId = PEER_ID)
     val store = PeerStore(stateDir)
-    val changes = store.loadChanges()
+    val all = store.loadChanges()
+    val wm = ru.rudra.androidos.pa.domain.sync.ChangeWatermark().apply {
+        // Seed the watermark from previously-acked keys so we never re-send
+        // something the phone already confirmed.
+        ackKeys(store.ackedKeys())
+    }
+    val pending = wm.pending(all)
     val envelope = engine.buildEnvelope(
         sequence = System.currentTimeMillis(),
-        changes = changes,
+        changes = pending,
         createdAt = java.time.Instant.now().toString(),
         keyId = keyId,
         encryptionAlgorithms = "AES-256-GCM+HMAC-SHA256 (shared-key pairing)",
     )
     ExchangeFile.write(outFile, envelope, keys(stateDir))
-    println("exported ${changes.size} change(s) -> ${outFile.absolutePath}")
+    println("exported ${pending.size} change(s) of ${all.size} -> ${outFile.absolutePath}")
     println("  envelope=${envelope.id} hash=${envelope.bundleHash.take(16)}...")
 }
 
@@ -130,6 +191,17 @@ private fun apply(inFile: File, stateDir: File, keyId: String) {
         val known = store.loadChanges().associateBy { it.idempotencyKey }.toMutableMap()
         envelope.changes.forEach { known.putIfAbsent(it.idempotencyKey, it) }
         store.saveChanges(known.values.toList())
+    }
+    // Watermark: any change we ourselves originally produced that came back in
+    // this bundle (an echo from the phone) is confirmed delivered — ack it so
+    // the next export does not re-send it, and compact the pending log.
+    val echo = envelope.changes.filter { it.actorDeviceId == PEER_ID }
+    if (echo.isNotEmpty()) {
+        val newly = store.ack(echo.map { it.idempotencyKey }.toSet())
+        if (newly > 0) {
+            store.compactInto(store.ackedKeys())
+            println("  watermarked $newly previously-sent change(s) as delivered")
+        }
     }
     println(
         "applied envelope=${report.envelopeId} from=${header.sender} " +

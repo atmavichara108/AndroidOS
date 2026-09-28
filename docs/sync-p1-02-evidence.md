@@ -144,6 +144,24 @@ Device-проверка (2026-09-28, Redmi 3c3da9f8): ноутбук `seed prov1
 phone import -> в БД change `peer-seed-prov1` хранит оба значения; миграция v1->v2
 прошла без краша; старые изменения сохранены с `provenance='[]'`.
 
+## P2-пункт: peer change-log watermark/compaction (done)
+
+Раньше peer-лог рос без границы и export пересылал всю историю при каждом
+обмене (O(n²)). Теперь `domain/sync/ChangeWatermark` (6 тестов) + PeerStore:
+
+- pending = изменения, чьи idempotency-ключи не в acked-наборе; export шлёт
+  только pending.
+- apply помечает acked те изменения, что пришли обратно как echo (свои,
+  actorDeviceId == PEER_ID) — подтверждение доставки; водяной знак
+  восстанавливается из `acked.txt` при старте.
+- Подтверждённые исключаются из следующего export; `apply` после подтверждения
+  сжимает `changes.bin` (только pending), acked уходят в `compacted.bin`
+  (история/provenance сохранены для аудита).
+
+Peer-CLI-проверка (без телефона): два seed-вызова -> export 1 «2 of 2» ->
+apply своего export «watermarked 2 ... as delivered» -> export 2 «0 of 2» —
+повторная отправка устранена, лог сжат (acked в compacted.bin).
+
 ## Known limits (P2 scope, stated honestly)
 
 - Pairing: salt exchange is out-of-band (adb/manual) and unauthenticated —
@@ -163,8 +181,6 @@ phone import -> в БД change `peer-seed-prov1` хранит оба значе�
   expected, re-export after pairing.
 - The plaintext routing header (id/sender/sequence/keyId) is not covered by
   the MAC and must be treated as untrusted display metadata.
-- The peer's change log grows without a watermark or compaction, so repeated
-  exchanges re-send the whole history (O(n²) transfer in the long run).
 - Expiry (`expiresAt`) is implemented and unit-tested but no production caller
   sets it yet.
 - Transport in this evidence is adb file push/pull, not a background channel
