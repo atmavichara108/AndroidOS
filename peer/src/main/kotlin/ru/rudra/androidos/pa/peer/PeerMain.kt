@@ -161,9 +161,16 @@ private fun seed(stateDir: File, idSuffix: String) {
             actorDeviceId = "laptop-peer",
             baseVersion = null,
             occurredAt = java.time.Instant.now().toString(),
-            logicalClock = null,
+            logicalClock = "clock-$idSuffix",
             idempotencyKey = "peer-key-$idSuffix",
-            provenance = emptyList(),
+            provenance = listOf(
+                ru.rudra.androidos.pa.domain.model.ProvenanceEntry(
+                    source = ru.rudra.androidos.pa.domain.model.ProvenanceSource.EXTRACTION_ENGINE,
+                    actor = "laptop-peer",
+                    at = java.time.Instant.now().toString(),
+                    detail = "seeded",
+                )
+            ),
             retentionClass = RetentionClass.PERMANENT,
         )
     )

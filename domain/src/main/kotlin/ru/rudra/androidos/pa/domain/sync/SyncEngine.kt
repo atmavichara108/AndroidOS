@@ -95,6 +95,15 @@ class SyncEngine(private val deviceId: String) {
                 append('|').append(c.logicalClock ?: "")
                 append('|').append(c.idempotencyKey)
                 append('|').append(c.retentionClass.name)
+                append('|')
+                // provenance is covered so a tampered/garbled provenance chain
+                // changes the hash and cannot go undetected. Total order by
+                // (at, source, actor) so equal-timestamp entries hash the same
+                // on sender and receiver regardless of insertion order.
+                c.provenance.sortedWith(compareBy({ it.at }, { it.source.name }, { it.actor }))
+                    .forEach { p ->
+                        append(p.source.name).append(':').append(p.actor).append(':').append(p.at).append(':').append(p.detail ?: "").append(';')
+                    }
                 append('\n')
             }
             tombstones.forEach { append("T:").append(it).append('\n') }

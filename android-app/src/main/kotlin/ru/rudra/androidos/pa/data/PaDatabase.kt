@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -13,7 +15,7 @@ import androidx.room.RoomDatabase
         ReminderRow::class,
         ChangeRow::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class PaDatabase : RoomDatabase() {
@@ -24,6 +26,14 @@ abstract class PaDatabase : RoomDatabase() {
     abstract fun reminderDao(): ReminderDao
 
     companion object {
+        // v1 -> v2: change log gains logicalClock + provenance (bundleHash coverage).
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE changes ADD COLUMN logicalClock TEXT")
+                db.execSQL("ALTER TABLE changes ADD COLUMN provenanceJson TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
         @Volatile
         private var instance: PaDatabase? = null
 
@@ -33,7 +43,7 @@ abstract class PaDatabase : RoomDatabase() {
                     context.applicationContext,
                     PaDatabase::class.java,
                     "pa.db",
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
             }
     }
 }

@@ -63,6 +63,8 @@ data class ChangeRow(
     val actorDeviceId: String,
     val baseVersion: Long?,
     val occurredAt: String,
+    val logicalClock: String?,
     val idempotencyKey: String,
     val retentionClass: String,
+    val provenanceJson: String,
 )

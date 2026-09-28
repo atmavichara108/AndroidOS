@@ -177,8 +177,10 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
         actorDeviceId = actorDeviceId,
         baseVersion = baseVersion,
         occurredAt = occurredAt,
+        logicalClock = logicalClock,
         idempotencyKey = idempotencyKey,
         retentionClass = retentionClass.name,
+        provenanceJson = encodeProvenance(provenance),
     )
 
     private fun ChangeRow.toChange(): Change {
@@ -194,12 +196,40 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
             actorDeviceId = actorDeviceId,
             baseVersion = baseVersion,
             occurredAt = occurredAt,
-            // ChangeRow does not persist logicalClock/provenance (P1 scope);
-            // they are re-added by the sync layer in P2.
-            logicalClock = null,
+            logicalClock = logicalClock,
             idempotencyKey = idempotencyKey,
-            provenance = emptyList(),
+            provenance = decodeProvenance(provenanceJson),
             retentionClass = RetentionClass.valueOf(retentionClass),
         )
+    }
+
+    private fun encodeProvenance(entries: List<ru.rudra.androidos.pa.domain.model.ProvenanceEntry>): String {
+        val arr = org.json.JSONArray()
+        entries.forEach { e ->
+            arr.put(
+                JSONObject()
+                    .put("source", e.source.name)
+                    .put("actor", e.actor)
+                    .put("at", e.at)
+                    // JSONObject.put(k, null) removes the key, so store the
+                    // absence marker explicitly to keep null vs "" distinct.
+                    .put("detail", e.detail ?: org.json.JSONObject.NULL)
+            )
+        }
+        return arr.toString()
+    }
+
+    private fun decodeProvenance(json: String): List<ru.rudra.androidos.pa.domain.model.ProvenanceEntry> {
+        if (json.isBlank()) return emptyList()
+        val arr = org.json.JSONArray(json)
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            ru.rudra.androidos.pa.domain.model.ProvenanceEntry(
+                source = ru.rudra.androidos.pa.domain.model.ProvenanceSource.valueOf(o.getString("source")),
+                actor = o.getString("actor"),
+                at = o.getString("at"),
+                detail = if (o.isNull("detail")) null else o.optString("detail"),
+            )
+        }
     }
 }

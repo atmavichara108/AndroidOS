@@ -128,13 +128,24 @@ Device-матрица (2026-09-28, Redmi 3c3da9f8 + laptop):
 | re-pair + export | снова работает (73 change(s)) |
 | повторный import phone export (b62e79ee, 72 changes) | `applied=0 duplicates=72` — идемпотентность |
 
+## P2-пункт: provenance + logicalClock в change log и bundleHash coverage (done)
+
+Раньше `ChangeRow` не хранил `logicalClock`/`provenance` (сбрасывались в null/[]),
+а `bundleHash` не покрывал provenance — и то, и другое было зафиксировано в
+Known limits. Теперь:
+
+- `ChangeRow` (v2, миграция 1->2 через ADD COLUMN): `logicalClock` + `provenanceJson`;
+  `RoomLocalStore.toRow/toChange` сериализуют provenance в JSON и восстанавливают.
+- `SyncEngine.bundleHash` покрывает provenance (sorted by at), так что
+  подмена/искажение provenance-цепочки ломает хеш.
+
+Device-проверка (2026-09-28, Redmi 3c3da9f8): ноутбук `seed prov1` c
+`logicalClock=clock-prov1` и `provenance=[EXTRACTION_ENGINE, laptop-peer]` ->
+phone import -> в БД change `peer-seed-prov1` хранит оба значения; миграция v1->v2
+прошла без краша; старые изменения сохранены с `provenance='[]'`.
+
 ## Known limits (P2 scope, stated honestly)
 
-- `ChangeRow` does not persist `logicalClock`/`provenance`; export sends
-  `provenance=[]` and `logicalClock=null`. The canonical `bundleHash` covers
-  `logicalClock` but **not** `provenance`, so provenance loss is both a data
-  and a tamper-detection gap against docs/privacy-and-sync.md; close in P2
-  (schema + hash coverage).
 - Pairing: salt exchange is out-of-band (adb/manual) and unauthenticated —
   MITM resistance assumes a trusted channel for the exchange; session keys are
   deterministic per device-pair. **Revoke is an access kill-switch, not a key
