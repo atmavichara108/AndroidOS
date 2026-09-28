@@ -85,6 +85,19 @@ class MainActivity : ComponentActivity() {
         val store = RoomLocalStore(db)
         val deviceId = UUID.randomUUID().toString()
         handleSyncIntent(intent, db, store)
+        Thread {
+            runCatching {
+                store.purgeExpired().forEach { name ->
+                    val dir = if (Build.VERSION.SDK_INT >= 31) {
+                        getExternalFilesDir(Environment.DIRECTORY_RECORDINGS)
+                    } else {
+                        null
+                    } ?: filesDir
+                    val f = File(dir, name)
+                    if (f.exists()) f.delete()
+                }
+            }.onFailure { android.util.Log.e("PA_SYNC", "retention purge failed", it) }
+        }.start()
         setContent {
             MaterialTheme {
                 InboxScreenHost(db, store, deviceId)

@@ -1,10 +1,12 @@
 package ru.rudra.androidos.pa.data
 
+import java.time.Instant
 import org.json.JSONObject
 import ru.rudra.androidos.pa.domain.model.Change
 import ru.rudra.androidos.pa.domain.model.ChangeOperation
 import ru.rudra.androidos.pa.domain.model.RetentionClass
 import ru.rudra.androidos.pa.domain.port.LocalStore
+import ru.rudra.androidos.pa.domain.retention.RetentionPolicy
 import ru.rudra.androidos.pa.domain.sync.ChangeMaterializer
 import ru.rudra.androidos.pa.domain.sync.ConflictOutcome
 import ru.rudra.androidos.pa.domain.sync.ConflictPolicy
@@ -32,6 +34,31 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
 
     /** All local changes in canonical order — the input for envelope export. */
     fun allChanges(): List<Change> = db.changeDao().all().map { it.toChange() }
+
+    /**
+     * Purges inbox items whose retention class has expired (docs/privacy-and-sync.md).
+     * Tombsstones them locally (propagated deletion) and returns the raw audio blob
+     * filenames that the caller should delete from disk. Pure storage concern — no
+     * blob I/O here, so the store stays context-free.
+     */
+    fun purgeExpired(now: Instant = Instant.now()): List<String> {
+        val policy = RetentionPolicy()
+        val rows = db.inboxDao().all()
+        val candidates = rows.filter { row ->
+            val since = runCatching { Instant.parse(row.capturedAt) }.getOrNull()
+                ?: return@filter false
+            policy.isExpired(RetentionClass.valueOf(row.retentionClass), since, now)
+        }
+        if (candidates.isEmpty()) return emptyList()
+        val blobs = mutableListOf<String>()
+        db.runInTransaction {
+            candidates.forEach { row ->
+                db.inboxDao().tombstone(row.id, now.toString())
+                if (row.kind == "AUDIO") row.body?.let { blobs += it }
+            }
+        }
+        return blobs
+    }
 
     private fun materialize(change: Change) {
         val conflictPolicy = ConflictPolicy()
