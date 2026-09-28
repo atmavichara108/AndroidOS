@@ -24,8 +24,9 @@ import java.security.SecureRandom
  * - Session-key reuse: shared keys are a deterministic function of the two
  *   device keys with fixed HMAC labels and no per-session salt, so every
  *   session between the same pair reuses the same keys. Acceptable for the
- *   offline-bundle model where revocation is the only key change; a
- *   compromised session key would compromise every session between that pair.
+ *   offline-bundle model. Note: revoke is an access kill-switch, NOT a key
+ *   rotation — re-pairing reproduces bit-identical keys and traffic recorded
+ *   before revoke stays decryptable after re-pair.
  * - Salt exchange is unauthenticated: MITM resistance rests on the salt
  *   exchange being out-of-band/authenticated (provisioning step of pairing);
  *   a relay that injects its own salt into both sides yields key(attacker,A)
@@ -76,8 +77,20 @@ class PairingManager(
         return selfKeys(passphrase)
     }
 
-    /** Pairs with a partner using its device id and public salt. */
+    /** Pairs with a partner using its device id and public salt.
+     * Validates the salt eagerly so a typo'd/truncated value fails here with a
+     * clear message instead of much later as a MAC/decode error. */
     fun pair(passphrase: CharArray, partnerId: String, partnerSaltB64: String, at: String) {
+        val saltBytes = try {
+            java.util.Base64.getDecoder().decode(partnerSaltB64)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException(
+                "partner salt is not valid Base64 — copy the full salt from pairinfo", e
+            )
+        }
+        require(saltBytes.size >= SALT_BYTES) {
+            "partner salt too short (${saltBytes.size} bytes, expected >= $SALT_BYTES) — truncated copy?"
+        }
         store.addPartner(PairedDevice(partnerId, partnerSaltB64, at))
     }
 
@@ -101,6 +114,9 @@ class PairingManager(
 
     fun selfKeys(passphrase: CharArray): CryptoBox.Keys =
         CryptoBox.deriveKeys(passphrase, decode(store.selfSaltB64()!!))
+
+    /** Public salt for out-of-band exchange during pairing (not secret). */
+    fun selfSaltB64(): String? = store.selfSaltB64()
 
     /** Derives a deterministic shared key from two device keys, ordered by id.
      * Only the PBKDF2 encryption halves are mixed — they carry the full 256-bit

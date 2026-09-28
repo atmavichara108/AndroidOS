@@ -11,20 +11,28 @@ import ru.rudra.androidos.pa.domain.sync.SyncEngine
 import java.io.File
 
 /**
- * Laptop peer for P1-02: a plain JVM process that speaks the same
+ * Laptop peer for P1-02/P2: a plain JVM process that speaks the same
  * domain/sync contract as the phone. It exchanges *sealed envelope files*
  * with the phone (adb or any transport); it never touches a live SQLite file.
  *
  * Commands:
- *   export <out.pa-sync> <state-dir>   build an envelope from locally pending
- *                                      changes and seal it
+ *   pairinfo <state-dir>               print this device id + public salt
+ *   pair <state-dir> <partnerId> <salt> pair with the phone (salts exchanged
+ *                                       out of band via adb)
+ *   revoke <state-dir> <partnerId>     revoke a partner (shared key dies)
+ *   export <out.pa-sync> <state-dir>   seal locally pending changes with the
+ *                                       shared session key
  *   apply  <in.pa-sync> <state-dir>    verify + apply idempotently, print report
  *   show   <file.pa-sync>              print the plaintext routing header
  *   selftest <state-dir>               duplicate/reorder fault injection check
+ *   seed   <state-dir> <suffix>        append a synthetic local change
+ *   seedupdate <state-dir> <entityId> <baseVersion> <title>
  *
- * The passphrase comes from PA_SYNC_PASSPHRASE; keyId defaults to "pa-local"
- * (P2 replaces this with real pairing/revocation).
+ * Keys: PA_SYNC_PASSPHRASE + PairingManager shared session keys (per-device
+ * salts). export/apply require pairing with the phone first.
  */
+const val PEER_ID = "laptop-peer"
+const val PHONE_PARTNER_ID = "phone-3c3da9f8"
 
 /** File-backed peer state: pending changes plus the set of applied keys. */
 class PeerStore(private val dir: File) : LocalStore {
@@ -55,14 +63,47 @@ class PeerStore(private val dir: File) : LocalStore {
     }
 }
 
-private fun keys(keyId: String): CryptoBox.Keys {
-    val passphrase = System.getenv("PA_SYNC_PASSPHRASE")
-        ?: error("set PA_SYNC_PASSPHRASE to derive sync keys")
-    return CryptoBox.deriveKeys(passphrase.toCharArray(), ExchangeFile.saltFor(keyId))
+private fun passphrase(): CharArray =
+    (System.getenv("PA_SYNC_PASSPHRASE")
+        ?: error("set PA_SYNC_PASSPHRASE to derive sync keys")).toCharArray()
+
+private fun pairing(stateDir: File) =
+    ru.rudra.androidos.pa.domain.sync.PairingManager(
+        ru.rudra.androidos.pa.domain.sync.FilePairStore(stateDir)
+    )
+
+/** Shared session keys with the phone; errors when not paired. */
+private fun keys(stateDir: File): CryptoBox.Keys {
+    val p = pairing(stateDir)
+    p.ensureSelf(passphrase(), PEER_ID)
+    return p.sharedKeys(passphrase(), PHONE_PARTNER_ID)
+        ?: error("not paired with $PHONE_PARTNER_ID (run pairinfo and exchange salts with the phone)")
+}
+
+private fun pairInfo(stateDir: File) {
+    val p = pairing(stateDir)
+    p.ensureSelf(passphrase(), PEER_ID)
+    println("id=$PEER_ID")
+    println("salt=${p.selfSaltB64()}")
+    println("pair the phone with: am start ... --es pa_sync \"pair $PEER_ID ${p.selfSaltB64()}\"")
+}
+
+private fun pair(stateDir: File, partnerId: String, partnerSaltB64: String) {
+    val p = pairing(stateDir)
+    p.ensureSelf(passphrase(), PEER_ID)
+    p.pair(passphrase(), partnerId, partnerSaltB64, java.time.Instant.now().toString())
+    println("paired with $partnerId")
+}
+
+private fun revoke(stateDir: File, partnerId: String) {
+    val p = pairing(stateDir)
+    p.ensureSelf(passphrase(), PEER_ID)
+    p.revoke(partnerId)
+    println("revoked $partnerId")
 }
 
 private fun export(outFile: File, stateDir: File, keyId: String) {
-    val engine = SyncEngine(deviceId = "laptop-peer")
+    val engine = SyncEngine(deviceId = PEER_ID)
     val store = PeerStore(stateDir)
     val changes = store.loadChanges()
     val envelope = engine.buildEnvelope(
@@ -70,18 +111,19 @@ private fun export(outFile: File, stateDir: File, keyId: String) {
         changes = changes,
         createdAt = java.time.Instant.now().toString(),
         keyId = keyId,
+        encryptionAlgorithms = "AES-256-GCM+HMAC-SHA256 (shared-key pairing)",
     )
-    ExchangeFile.write(outFile, envelope, keys(keyId))
+    ExchangeFile.write(outFile, envelope, keys(stateDir))
     println("exported ${changes.size} change(s) -> ${outFile.absolutePath}")
     println("  envelope=${envelope.id} hash=${envelope.bundleHash.take(16)}...")
 }
 
 private fun apply(inFile: File, stateDir: File, keyId: String) {
     val header = ExchangeFile.readHeader(inFile) ?: error("not a PA-SYNC file: $inFile")
-    val envelope = ExchangeFile.read(inFile, keys(keyId))
-        ?: error("MAC/tag verification failed for ${inFile.name} (tampered or wrong key)")
+    val envelope = ExchangeFile.read(inFile, keys(stateDir))
+        ?: error("MAC/tag verification failed for ${inFile.name} (tampered, wrong passphrase, or not a pair partner)")
     val store = PeerStore(stateDir)
-    val report = SyncEngine(deviceId = "laptop-peer").apply(envelope, store)
+    val report = SyncEngine(deviceId = PEER_ID).apply(envelope, store)
     // Like a real device: applied remote changes become part of local history
     // and are re-exported on the next exchange (which the phone then dedupes).
     if (report.applied > 0) {
@@ -214,21 +256,49 @@ private fun sampleChange(id: String, occurredAt: String) = Change(
 )
 
 fun main(args: Array<String>) {
+    val usage = "usage: pairinfo <state-dir> | pair <state-dir> <partnerId> <saltB64> | " +
+        "revoke <state-dir> <partnerId> | export <out.pa-sync> <state-dir> | " +
+        "apply <in.pa-sync> <state-dir> | show <file> | selftest <state-dir> | " +
+        "seed <state-dir> <suffix> | seedupdate <state-dir> <entityId> <baseVersion> <title>"
     if (args.isEmpty()) {
-        println("usage: export|apply|show|selftest ...")
+        println(usage)
+        kotlin.system.exitProcess(1)
+    }
+    // Arity check per command before indexing args, then friendly one-line
+    // errors (not-paired, bad salt, missing passphrase) instead of stack traces.
+    val minArgs = mapOf(
+        "pairinfo" to 2, "pair" to 4, "revoke" to 3, "export" to 3,
+        "apply" to 3, "show" to 2, "selftest" to 2, "seed" to 3, "seedupdate" to 5,
+    )
+    val min = minArgs[args[0]]
+    if (min == null) {
+        println("unknown command ${args[0]}")
+        println(usage)
+        kotlin.system.exitProcess(1)
+    }
+    if (args.size < min) {
+        println("missing arguments for ${args[0]}")
+        println(usage)
         kotlin.system.exitProcess(1)
     }
     val keyId = System.getenv("PA_SYNC_KEY_ID") ?: "pa-local"
-    when (args[0]) {
-        "export" -> export(File(args[1]), File(args[2]), keyId)
-        "apply" -> apply(File(args[1]), File(args[2]), keyId)
-        "show" -> show(File(args[1]))
-        "selftest" -> selftest(File(args[1]), keyId)
-        "seed" -> seed(File(args[1]), args[2])
-        "seedupdate" -> seedUpdate(File(args[1]), args[2], args[3].toLong(), args[4])
-        else -> {
-            println("unknown command ${args[0]}")
-            kotlin.system.exitProcess(1)
+    try {
+        when (args[0]) {
+            "pairinfo" -> pairInfo(File(args[1]))
+            "pair" -> pair(File(args[1]), args[2], args[3])
+            "revoke" -> revoke(File(args[1]), args[2])
+            "export" -> export(File(args[1]), File(args[2]), keyId)
+            "apply" -> apply(File(args[1]), File(args[2]), keyId)
+            "show" -> show(File(args[1]))
+            "selftest" -> selftest(File(args[1]), keyId)
+            "seed" -> seed(File(args[1]), args[2])
+            "seedupdate" -> seedUpdate(File(args[1]), args[2], args[3].toLong(), args[4])
         }
+    } catch (e: IllegalStateException) {
+        System.err.println("error: ${e.message}")
+        kotlin.system.exitProcess(1)
+    } catch (e: IllegalArgumentException) {
+        System.err.println("error: ${e.message}")
+        kotlin.system.exitProcess(1)
     }
 }

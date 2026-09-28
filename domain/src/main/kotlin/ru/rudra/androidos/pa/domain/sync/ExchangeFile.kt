@@ -81,5 +81,10 @@ object ExchangeFile {
         )
     }
 
+    /** Legacy fixed salt. Not used by production code since pairing landed (key
+     * derivation goes through PairingManager.sharedKeys); kept only for old
+     * test fixtures. Reintroducing it for real keys would break the
+     * per-device-salt guarantee. */
+    @Deprecated("legacy fixed salt; use PairingManager.sharedKeys for real key derivation")
     fun saltFor(keyId: String): ByteArray = "androidos-sync:$keyId".toByteArray()
 }

@@ -99,6 +99,35 @@ Device-проверка (2026-09-27, Redmi 3c3da9f8), оба пути:
   материализуется и счётчик версии продвигается (реальный UPDATE, а не
   IGNORE-insert).
 
+## P2-пункт: pairing / revocation / per-device salt (done)
+
+Прежде salt для PBKDF2 был фиксированным (`androidos-sync:<keyId>`) — одна
+парольная фраза = одинаковые ключи на всех устройствах. Теперь:
+
+- `PairingManager` (domain): per-device random-salt (32 B, создаётся один раз),
+  immutable identity; `pair`/`revoke`; `sharedKeys` = HMAC-labelled expand over
+  SHA-256 двух PBKDF2 device-ключей, упорядоченных по deviceId — обе стороны
+  выводят один и тот же общий ключ без передачи ключа по каналу. 5 доменных тестов.
+- `FilePairStore` (domain, JVM): file-backed, synchronized, persist через
+  temp+rename; `AndroidPairStore` — обёртка над ним в app-private files.
+- CLI/хуки: телефон `pairinfo|pair|revoke|export|import` (SyncHooks), ноутбук
+  `pairinfo|pair|revoke|export|apply/...` (PeerMain). Обмен salt — out-of-band
+  (adb/руками), парольная фраза — общий secret (P2 provisional).
+
+Device-матрица (2026-09-28, Redmi 3c3da9f8 + laptop):
+
+| Шаг | Результат |
+|---|---|
+| phone pairinfo | `salt=NpBafz...` (случайный, per-device) |
+| laptop pairinfo | `salt=lztiIB...` (другой случайный) |
+| pair в обе стороны | `paired with laptop-peer` / `paired with phone-3c3da9f8` |
+| phone export (shared key) | 72 change(s), envelope b62e79ee |
+| laptop apply | `applied=72 duplicates=0 rejected=false` — **общий ключ выведен с разных salt** |
+| laptop seed+export → phone import | `applied=1 duplicates=72` — dedup поверх shared-key transport |
+| phone revoke | `revoked laptop-peer`; export → `failed: not paired with laptop-peer` |
+| re-pair + export | снова работает (73 change(s)) |
+| повторный import phone export (b62e79ee, 72 changes) | `applied=0 duplicates=72` — идемпотентность |
+
 ## Known limits (P2 scope, stated honestly)
 
 - `ChangeRow` does not persist `logicalClock`/`provenance`; export sends
@@ -106,9 +135,21 @@ Device-проверка (2026-09-27, Redmi 3c3da9f8), оба пути:
   `logicalClock` but **not** `provenance`, so provenance loss is both a data
   and a tamper-detection gap against docs/privacy-and-sync.md; close in P2
   (schema + hash coverage).
-- Keys: PBKDF2 uses a fixed, non-secret salt derived from the keyId, so two
-  installs with the same passphrase derive the same keys and weak passphrases
-  are precomputable. Real pairing/revocation and per-device salts are P2.
+- Pairing: salt exchange is out-of-band (adb/manual) and unauthenticated —
+  MITM resistance assumes a trusted channel for the exchange; session keys are
+  deterministic per device-pair. **Revoke is an access kill-switch, not a key
+  rotation**: it only drops the partner entry — both salts persist, so re-pair
+  reproduces bit-identical shared keys, and traffic recorded before revoke
+  stays decryptable after re-pair (no in-band rotation exists yet; losing the
+  local pairing file is the only path that re-rolls a salt, and it fails
+  closed). Secure provisioning/UI is P2/P3.
+- Debug-only sync commands (pair/revoke/export/import via intent extra on an
+  exported activity) are driveable by any on-device app in debug builds; worst
+  case is DoS (overwriting/revoking pairing) — salts are public, keys still
+  need the passphrase from app-private storage, and release builds disable the
+  hook entirely.
+- Bundles sealed before pairing (legacy fixed-salt key) no longer open —
+  expected, re-export after pairing.
 - The plaintext routing header (id/sender/sequence/keyId) is not covered by
   the MAC and must be treated as untrusted display metadata.
 - The peer's change log grows without a watermark or compaction, so repeated
