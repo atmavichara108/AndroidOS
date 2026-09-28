@@ -558,12 +558,20 @@ private fun approve(
             val entityId = UUID.randomUUID().toString()
             val item = db.inboxDao().byId(inboxItemId)
             val title = effectiveTitle(db, inboxItemId, item)
+            val triggerAtMillis = System.currentTimeMillis() + REMINDER_DELAY_MS
+            val triggerAt = Instant.ofEpochMilli(triggerAtMillis).toString()
             // Schema-validated proposal (docs/architecture.md): only a known
-            // entity type with the required attributes may be approved.
+            // entity type with the required attributes may be approved. approve()
+            // only carries a title; the reminder trigger time doubles as the
+            // start for time-scoped kinds (EVENT/MEETING) so their schema passes.
             val registry = ru.rudra.androidos.pa.domain.entity.EntityRegistry(
                 ru.rudra.androidos.pa.domain.entity.DefaultEntitySchemas.all()
             )
-            val attrs = mapOf("title" to title)
+            val kindStartKeys = setOf("EVENT", "MEETING")
+            val attrs = buildMap {
+                put("title", title)
+                if (kind in kindStartKeys) put("startsAt", triggerAt)
+            }
             val problems = registry.validate(
                 ru.rudra.androidos.pa.domain.model.EntityType("pa", kind),
                 attrs,
@@ -572,8 +580,6 @@ private fun approve(
                 throw IllegalArgumentException("cannot approve: ${problems.joinToString("; ")}")
             }
             val attrsJson = org.json.JSONObject(attrs).toString()
-            val triggerAtMillis = System.currentTimeMillis() + REMINDER_DELAY_MS
-            val triggerAt = Instant.ofEpochMilli(triggerAtMillis).toString()
             val reminderId = UUID.randomUUID().toString()
             db.runInTransaction {
                 db.entityDao().insert(
