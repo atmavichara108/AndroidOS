@@ -6,10 +6,22 @@ import android.os.Bundle
 import android.content.Context
 import android.content.Intent
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +64,10 @@ import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.UiInboxState
 import ru.rudra.androidos.pa.ui.UiRecording
+import ru.rudra.androidos.pa.ui.TaskBoardScreen
+import ru.rudra.androidos.pa.ui.UiTaskBoardState
+import ru.rudra.androidos.pa.ui.UiTaskCard
+import ru.rudra.androidos.pa.ui.UiTaskColumn
 import java.io.File
 import android.os.Environment
 
@@ -63,6 +79,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         requestRuntimePermissions()
         val db = PaDatabase.get(this)
         val store = RoomLocalStore(db)
@@ -107,6 +124,8 @@ private fun InboxScreenHost(
     deviceId: String,
 ) {
     var ui by remember { mutableStateOf(UiInboxState(isLoading = true)) }
+    var board by remember { mutableStateOf(UiTaskBoardState(title = "Approved tasks")) }
+    var selectedScreen by remember { mutableStateOf("INBOX") }
     var recordings by remember { mutableStateOf(emptyList<UiRecording>()) }
     val captureState by RecordingBus.state.collectAsState()
     val context = LocalContext.current
@@ -179,6 +198,29 @@ private fun InboxScreenHost(
         Thread {
             ui = runCatching { toUiState(db.inboxDao().all()) }
                 .getOrElse { UiInboxState(error = it.message ?: "load failed") }
+            board = runCatching {
+                val tasks = db.entityDao().approved()
+                    .asSequence()
+                    .filter { it.type == "TASK" }
+                    .mapNotNull { row ->
+                        runCatching {
+                            val attrs = org.json.JSONObject(row.attributesJson)
+                            UiTaskCard(
+                                id = row.id,
+                                title = attrs.optString("title").ifBlank { "Untitled task" },
+                                project = attrs.optString("projectId").takeIf(String::isNotBlank)
+                                    ?: attrs.optString("project").takeIf(String::isNotBlank),
+                                dueLabel = attrs.optString("dueAt").takeIf(String::isNotBlank),
+                                priority = attrs.optString("priority").takeIf(String::isNotBlank),
+                            )
+                        }.getOrNull()
+                    }
+                    .toList()
+                UiTaskBoardState(
+                    title = "Approved tasks",
+                    columns = listOf(UiTaskColumn("BACKLOG", "Backlog", tasks)),
+                )
+            }.getOrElse { UiTaskBoardState(title = "Approved tasks") }
         }.start()
     }
 
@@ -188,7 +230,33 @@ private fun InboxScreenHost(
         if (captureState == CaptureState.IDLE || captureState == CaptureState.STOPPED) reload()
     }
 
-    InboxScreen(
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            if (selectedScreen == "INBOX") {
+                Button(onClick = { selectedScreen = "INBOX" }) { Text("Inbox") }
+                OutlinedButton(onClick = { selectedScreen = "TASKS" }) { Text("Tasks") }
+            } else {
+                OutlinedButton(onClick = { selectedScreen = "INBOX" }) { Text("Inbox") }
+                Button(onClick = { selectedScreen = "TASKS" }) { Text("Tasks") }
+            }
+            Spacer(Modifier.weight(1f))
+            val studioIntent = remember(context) {
+                Intent().setComponent(
+                    android.content.ComponentName(
+                        context.packageName,
+                        "ru.rudra.androidos.pa.studio.StudioActivity",
+                    ),
+                )
+            }
+            if (studioIntent.resolveActivity(context.packageManager) != null) {
+                OutlinedButton(onClick = { runCatching { context.startActivity(studioIntent) } }) {
+                    Text("Studio")
+                }
+            }
+        }
+        if (selectedScreen == "TASKS") {
+            TaskBoardScreen(state = board)
+        } else InboxScreen(
         state = ui,
         onAction = { action ->
             android.util.Log.d("PA_ACTION", "action=$action")
@@ -276,7 +344,8 @@ private fun InboxScreenHost(
         onDeleteRecording = { rec ->
             deleteRecordingFile(context, rec) { reload() }
         },
-    )
+        )
+    }
 }
 
 private fun capture(
@@ -489,7 +558,20 @@ private fun approve(
             val entityId = UUID.randomUUID().toString()
             val item = db.inboxDao().byId(inboxItemId)
             val title = effectiveTitle(db, inboxItemId, item)
-            val attrsJson = org.json.JSONObject().put("title", title).toString()
+            // Schema-validated proposal (docs/architecture.md): only a known
+            // entity type with the required attributes may be approved.
+            val registry = ru.rudra.androidos.pa.domain.entity.EntityRegistry(
+                ru.rudra.androidos.pa.domain.entity.DefaultEntitySchemas.all()
+            )
+            val attrs = mapOf("title" to title)
+            val problems = registry.validate(
+                ru.rudra.androidos.pa.domain.model.EntityType("pa", kind),
+                attrs,
+            )
+            if (problems.isNotEmpty()) {
+                throw IllegalArgumentException("cannot approve: ${problems.joinToString("; ")}")
+            }
+            val attrsJson = org.json.JSONObject(attrs).toString()
             val triggerAtMillis = System.currentTimeMillis() + REMINDER_DELAY_MS
             val triggerAt = Instant.ofEpochMilli(triggerAtMillis).toString()
             val reminderId = UUID.randomUUID().toString()

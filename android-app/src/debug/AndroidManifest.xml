@@ -4,5 +4,13 @@
         <activity android:name=".studio.StudioActivity" android:exported="true"
             android:label="AndroidOS Studio" android:icon="@android:drawable/ic_menu_view">
         </activity>
+        <receiver android:name=".studio.StudioWidgetReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/studio_widget_info" />
+        </receiver>
     </application>
 </manifest>

@@ -3,6 +3,10 @@ package ru.rudra.androidos.pa.studio
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxState
+import ru.rudra.androidos.pa.ui.UiTaskBoardAction
+import ru.rudra.androidos.pa.ui.UiTaskBoardState
+import ru.rudra.androidos.pa.ui.UiTaskCard
+import ru.rudra.androidos.pa.ui.UiTaskColumn
 
 /** Synthetic, side-effect-free data used by the embedded UI laboratory. */
 enum class StudioScenario(val title: String, val description: String) {
@@ -24,6 +28,7 @@ data class StudioUiState(
     val editingTranscriptId: String? = null,
     val pendingApproval: PendingApproval? = null,
     val sync: StudioSyncState = StudioSyncState(),
+    val board: UiTaskBoardState = defaultBoard(),
 ) {
     fun toUiInboxState(): UiInboxState = UiInboxState(
         items = items.map { item ->
@@ -34,6 +39,16 @@ data class StudioUiState(
         pendingApproval = pendingApproval,
     )
 }
+
+private fun defaultBoard() = UiTaskBoardState(
+    title = "Project board / Personal Assistant",
+    columns = listOf(
+        UiTaskColumn("backlog", "Backlog"),
+        UiTaskColumn("ready", "Ready"),
+        UiTaskColumn("progress", "In progress", listOf(UiTaskCard("task-1", "Подготовить план проекта", "AndroidOS", "Friday", "High"))),
+        UiTaskColumn("done", "Done"),
+    ),
+)
 
 data class StudioSyncConflict(
     val id: String,
@@ -70,6 +85,7 @@ sealed interface StudioAction {
     data object ToggleRecording : StudioAction
     data object Retry : StudioAction
     data object Reset : StudioAction
+    data class MoveTask(val taskId: String, val targetColumnId: String) : StudioAction
 }
 
 fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = when (action) {
@@ -135,6 +151,18 @@ fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = wh
     }
     StudioAction.Retry -> if (state.error != null) state.copy(error = null, items = StudioScenario.CAPTURED.toUiState().items) else state
     StudioAction.Reset -> state.scenario.toUiState()
+    is StudioAction.MoveTask -> state.copy(board = moveTask(state.board, action.taskId, action.targetColumnId))
+}
+
+private fun moveTask(board: UiTaskBoardState, taskId: String, targetColumnId: String): UiTaskBoardState {
+    val task = board.columns.flatMap { it.cards }.firstOrNull { it.id == taskId } ?: return board
+    return board.copy(columns = board.columns.map { column ->
+        when {
+            column.id == targetColumnId -> column.copy(cards = column.cards + task)
+            column.cards.any { it.id == taskId } -> column.copy(cards = column.cards.filterNot { it.id == taskId })
+            else -> column
+        }
+    })
 }
 
 fun replayStudio(initialScenario: StudioScenario, actions: List<StudioAction>): StudioUiState =

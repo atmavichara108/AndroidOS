@@ -5,7 +5,6 @@ package ru.rudra.androidos.pa.studio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiRecording
+import ru.rudra.androidos.pa.ui.TaskBoardScreen
+import ru.rudra.androidos.pa.ui.UiTaskBoardAction
 
 /**
  * Embedded UI lab. It deliberately has no Android, Room, microphone or alarm side effects.
@@ -53,7 +54,7 @@ fun StudioScreen(
         surface = androidx.compose.ui.graphics.Color(0xff0b160c),
     ) else androidx.compose.material3.lightColorScheme()) {
     Surface(modifier = modifier) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp)) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column {
                     Text("PIP-BOY / STUDIO", style = MaterialTheme.typography.titleLarge)
@@ -67,7 +68,7 @@ fun StudioScreen(
             }
 
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
             ScenarioPicker(state.scenario) {
@@ -103,6 +104,11 @@ fun StudioScreen(
             )
             if (inspector) InspectorPanel(state, actions)
             SyncPanel(state.sync) { action -> dispatch(action) }
+            TaskBoardScreen(state.board, onAction = { action ->
+                when (action) {
+                    is UiTaskBoardAction.MoveTask -> dispatch(StudioAction.MoveTask(action.taskId, action.targetColumnId))
+                }
+            })
             }
         }
     }

@@ -116,4 +116,11 @@ class StudioReducerTest {
         assertEquals(null, confirmed.pendingApproval)
         assertTrue(confirmed.approvals.contains("task:demo-1"))
     }
+
+    @Test fun kanbanMoveKeepsTaskUnique() {
+        val moved = reduceStudio(StudioScenario.CAPTURED.toUiState(), StudioAction.MoveTask("task-1", "ready"))
+        assertEquals(1, moved.board.columns.sumOf { column -> column.cards.count { it.id == "task-1" } })
+        assertTrue(moved.board.columns.first { it.id == "ready" }.cards.any { it.id == "task-1" })
+        assertTrue(moved.board.columns.first { it.id == "progress" }.cards.none { it.id == "task-1" })
+    }
 }
