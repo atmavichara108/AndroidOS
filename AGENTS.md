@@ -40,3 +40,9 @@ AndroidOS — modular umbrella/hybrid project. Первый flagship — Persona
 6. Только после PASS reviewer и verifier пользователь отдельно принимает решение о commit. Агенты сами не commit/push.
 
 Проверять laptop и phone как равноправные peers. Live SQLite file не синхронизировать: только authenticated encrypted change bundles. Widget dispatches idempotent commands; запись живет в foreground service.
+
+## Коммиты при параллельной работе
+
+- Каждый agent коммитит только свой lane; коммит — точечный `git add <пути lane>`, не `git add -A`.
+- При пересечении в общем файле правку вносит один владелец; второй ревьюит после коммита.
+- Перед коммитом: compile+test+lint gates → commit → сообщение peer'у с границей. Пуш по одному, после чистого коммита.
