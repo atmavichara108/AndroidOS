@@ -44,10 +44,14 @@ class RoomLocalStore(private val db: PaDatabase) : LocalStore {
     fun purgeExpired(now: Instant = Instant.now()): List<String> {
         val policy = RetentionPolicy()
         val rows = db.inboxDao().all()
-        val candidates = rows.filter { row ->
-            val since = runCatching { Instant.parse(row.capturedAt) }.getOrNull()
-                ?: return@filter false
-            policy.isExpired(RetentionClass.valueOf(row.retentionClass), since, now)
+        val candidates = rows.mapNotNull { row ->
+            val since = runCatching { Instant.parse(row.capturedAt) }.getOrNull() ?: return@mapNotNull null
+            val klass = policy.parseClass(row.retentionClass)
+            if (klass == null) {
+                android.util.Log.w("PA_RETENTION", "unknown retention class '${row.retentionClass}' for ${row.id}; treated as non-expiring")
+                return@mapNotNull null
+            }
+            if (policy.isExpired(klass, since, now)) row else null
         }
         if (candidates.isEmpty()) return emptyList()
         val blobs = mutableListOf<String>()

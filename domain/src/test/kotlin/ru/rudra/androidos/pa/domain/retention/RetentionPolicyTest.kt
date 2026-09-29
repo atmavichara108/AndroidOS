@@ -62,4 +62,15 @@ class RetentionPolicyTest {
         assertTrue(short.isExpired(RetentionClass.TEMPORARY_TRANSCRIPT, now.minus(Duration.ofMinutes(2)), now))
         assertFalse(short.isExpired(RetentionClass.TEMPORARY_TRANSCRIPT, now, now))
     }
+
+    @Test
+    fun `parseClass maps known labels and nulls unknown ones`() {
+        assertEquals(RetentionClass.PERMANENT, policy.parseClass("PERMANENT"))
+        assertEquals(RetentionClass.TEMPORARY_AUDIO, policy.parseClass("TEMPORARY_AUDIO"))
+        assertEquals(RetentionClass.TEMPORARY_TRANSCRIPT, policy.parseClass("TEMPORARY_TRANSCRIPT"))
+        assertEquals(RetentionClass.SESSION, policy.parseClass("SESSION"))
+        assertEquals(null, policy.parseClass("GARBAGE"))
+        assertEquals(null, policy.parseClass(""))
+        assertEquals(null, policy.parseClass(null))
+    }
 }

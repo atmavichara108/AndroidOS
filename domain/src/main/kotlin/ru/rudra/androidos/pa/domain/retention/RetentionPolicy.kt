@@ -35,6 +35,15 @@ class RetentionPolicy(
     fun purgeCandidates(records: List<RetentionCandidate>, now: Instant): List<RetentionCandidate> =
         records.filter { it.deletedAt == null && isExpired(it.retentionClass, it.since, now) }
 
+    /**
+     * Safe label-to-class parser: unknown/malformed retention labels resolve to
+     * null rather than throwing, so a corrupt row cannot break a whole purge.
+     * Callers should treat a null result as never-expiring (fail-safe).
+     */
+    fun parseClass(label: String?): RetentionClass? = runCatching {
+        label?.let(RetentionClass::valueOf)
+    }.getOrNull()
+
     companion object {
         fun defaultTtls(): Map<RetentionClass, Duration> = mapOf(
             RetentionClass.SESSION to Duration.ofHours(24),
