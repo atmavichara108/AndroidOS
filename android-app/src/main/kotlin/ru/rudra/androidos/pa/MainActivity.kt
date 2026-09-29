@@ -51,6 +51,9 @@ import ru.rudra.androidos.pa.domain.model.InboxState
 import ru.rudra.androidos.pa.domain.model.RetentionClass
 import ru.rudra.androidos.pa.domain.model.Transcript
 import ru.rudra.androidos.pa.domain.model.TranscriptStatus
+import ru.rudra.androidos.pa.domain.intent.IntentKind
+import ru.rudra.androidos.pa.domain.intent.ReminderDecision
+import ru.rudra.androidos.pa.domain.intent.ReminderPlanner
 import ru.rudra.androidos.pa.domain.port.TranscriberResult
 import ru.rudra.androidos.pa.domain.statemachine.CaptureState
 import ru.rudra.androidos.pa.recording.RecordingBus
@@ -324,7 +327,13 @@ private fun InboxScreenHost(
                     Thread {
                         val row = db.inboxDao().byId(id)
                         val title = effectiveTitle(db, id, row)
-                        pendingApproval = PendingApproval(id, kind, title)
+                        val planned = planReminder(title, kind, Instant.now())
+                        pendingApproval = PendingApproval(
+                            id = id,
+                            kind = kind,
+                            previewTitle = title,
+                            triggerLabel = planned.label,
+                        )
                         reload()
                     }.start()
                 }
@@ -571,8 +580,10 @@ private fun approve(
             val entityId = UUID.randomUUID().toString()
             val item = db.inboxDao().byId(inboxItemId)
             val title = effectiveTitle(db, inboxItemId, item)
-            val triggerAtMillis = System.currentTimeMillis() + REMINDER_DELAY_MS
-            val triggerAt = Instant.ofEpochMilli(triggerAtMillis).toString()
+            val planned = planReminder(title, kind, Instant.now())
+            val triggerAt = planned.triggerAt
+                ?: Instant.now().plusMillis(REMINDER_DELAY_MS).toString()
+            val needsReminder = planned.triggerAt != null || kind in KIND_START_KEYS
             // Schema-validated proposal (docs/architecture.md): only a known
             // entity type with the required attributes may be approved. approve()
             // only carries a title; the reminder trigger time doubles as the
@@ -580,10 +591,9 @@ private fun approve(
             val registry = ru.rudra.androidos.pa.domain.entity.EntityRegistry(
                 ru.rudra.androidos.pa.domain.entity.DefaultEntitySchemas.all()
             )
-            val kindStartKeys = setOf("EVENT", "MEETING")
             val attrs = buildMap {
                 put("title", title)
-                if (kind in kindStartKeys) put("startsAt", triggerAt)
+                if (kind in KIND_START_KEYS) put("startsAt", triggerAt)
             }
             val problems = registry.validate(
                 ru.rudra.androidos.pa.domain.model.EntityType("pa", kind),
@@ -593,7 +603,7 @@ private fun approve(
                 throw IllegalArgumentException("cannot approve: ${problems.joinToString("; ")}")
             }
             val attrsJson = org.json.JSONObject(attrs).toString()
-            val reminderId = UUID.randomUUID().toString()
+            val reminderId = if (needsReminder) UUID.randomUUID().toString() else null
             db.runInTransaction {
                 db.entityDao().insert(
                     EntityRow(
@@ -606,16 +616,18 @@ private fun approve(
                         deletedAt = null,
                     )
                 )
-                db.reminderDao().insert(
-                    ReminderRow(
-                        id = reminderId,
-                        targetId = entityId,
-                        triggerAt = triggerAt,
-                        timezone = java.util.TimeZone.getDefault().id,
-                        state = "ACTIVE",
-                        version = 1,
+                if (needsReminder && reminderId != null) {
+                    db.reminderDao().insert(
+                        ReminderRow(
+                            id = reminderId,
+                            targetId = entityId,
+                            triggerAt = triggerAt,
+                            timezone = java.util.TimeZone.getDefault().id,
+                            state = "ACTIVE",
+                            version = 1,
+                        )
                     )
-                )
+                }
                 db.inboxDao().updateState(inboxItemId, InboxState.STRUCTURED.name, now)
                 store.applyChange(
                     Change(
@@ -637,8 +649,15 @@ private fun approve(
                     )
                 )
             }
-            ReminderScheduler.schedule(context, reminderId, entityId, triggerAtMillis)
-            android.util.Log.d("PA_APPROVE", "created $kind entity=$entityId title='$title' reminder=$reminderId at $triggerAt")
+            if (needsReminder && reminderId != null) {
+                ReminderScheduler.schedule(
+                    context, reminderId, entityId, Instant.parse(triggerAt).toEpochMilli(),
+                )
+            }
+            android.util.Log.d(
+                "PA_APPROVE",
+                "created $kind entity=$entityId title='$title' reminder=$reminderId at $triggerAt",
+            )
         } catch (e: Exception) {
             android.util.Log.e("PA_APPROVE", "approve failed for $inboxItemId", e)
         }
@@ -646,9 +665,50 @@ private fun approve(
     }.start()
 }
 
-// [проверить] фиксированный сдвиг напоминания до появления extraction дат из
-// транскрипта (P2): пока «через час» — provisional placeholder.
+// Time-scoped kinds always carry a reminder; their trigger doubles as the
+// event/meeting start time so the entity schema passes validation.
+private val KIND_START_KEYS = setOf("EVENT", "MEETING")
+
+// Fallback trigger when a time-scoped kind has no parseable time cue: the
+// transcript gave no clock/offset/weekday, so we defer one hour rather than
+// guess a specific moment. A TASK with no cue gets no reminder at all.
 private const val REMINDER_DELAY_MS = 60L * 60L * 1000L
+
+private data class PlannedReminder(
+    val triggerAt: String?,
+    val label: String?,
+)
+
+/**
+ * Turns an approval title into a reminder trigger via the domain ReminderPlanner.
+ * Time cues in the text ("через 30 минут", "завтра в 9", "в пятницу") produce an
+ * absolute instant; a time-scoped kind (EVENT/MEETING) without a cue falls back to
+ * the one-hour default; a plain TASK without a cue yields no reminder at all.
+ */
+private fun planReminder(title: String, kind: String, now: Instant): PlannedReminder {
+    val intentKind = when (kind) {
+        "EVENT" -> IntentKind.EVENT
+        "MEETING" -> IntentKind.MEETING
+        "HABIT" -> IntentKind.HABIT
+        else -> IntentKind.TASK
+    }
+    val decision: ReminderDecision = ReminderPlanner.decide(
+        text = title,
+        intentKind = intentKind,
+        now = now,
+        zone = java.time.ZoneId.systemDefault(),
+    )
+    val triggerAt = decision.triggerAt
+    val label = when {
+        triggerAt != null -> {
+            val local = Instant.parse(triggerAt).atZone(java.time.ZoneId.systemDefault())
+            "⏰ ${local.toLocalDate()} ${local.toLocalTime()}"
+        }
+        decision.needsReminder -> "⏰ время не распознано — через час по умолчанию"
+        else -> null
+    }
+    return PlannedReminder(triggerAt, label)
+}
 
 /**
  * Effective human-readable title for an inbox item: edited transcript first,

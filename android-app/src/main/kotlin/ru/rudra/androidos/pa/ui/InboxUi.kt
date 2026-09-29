@@ -48,6 +48,7 @@ data class PendingApproval(
     val id: String,
     val kind: String,
     val previewTitle: String,
+    val triggerLabel: String? = null,
 )
 
 sealed interface UiInboxAction {
@@ -181,7 +182,14 @@ private fun ApprovalPanel(
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { onAction(UiInboxAction.CancelApproval) },
         title = { Text("APPROVAL REQUIRED") },
-        text = { Text("Create ${approval.kind.lowercase()}: ${approval.previewTitle}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Create ${approval.kind.lowercase()}: ${approval.previewTitle}")
+                approval.triggerLabel?.let { label ->
+                    Text(label, style = MaterialTheme.typography.titleSmall)
+                }
+            }
+        },
         confirmButton = {
             Button(onClick = { onAction(UiInboxAction.ConfirmApproval(approval.id, approval.kind)) }) {
                 Text("Confirm")
