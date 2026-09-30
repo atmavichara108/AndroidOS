@@ -123,4 +123,16 @@ class StudioReducerTest {
         assertTrue(moved.board.columns.first { it.id == "ready" }.cards.any { it.id == "task-1" })
         assertTrue(moved.board.columns.first { it.id == "progress" }.cards.none { it.id == "task-1" })
     }
+
+    @Test fun completingPlanTaskLeavesThePlanAndIsIdempotent() {
+        val initial = StudioScenario.CAPTURED.toUiState()
+        val allIds = initial.dailyPlan.buckets.flatMap { bucket -> bucket.items.map { it.id } }
+        assertTrue(allIds.contains("plan-2"))
+
+        val completed = reduceStudio(initial, StudioAction.CompleteTask("plan-2"))
+        val remaining = completed.dailyPlan.buckets.flatMap { bucket -> bucket.items.map { it.id } }
+        assertTrue(remaining.none { it == "plan-2" })
+        assertEquals(initial.dailyPlan.total - 1, completed.dailyPlan.total)
+        assertEquals(completed, reduceStudio(completed, StudioAction.CompleteTask("plan-2")))
+    }
 }

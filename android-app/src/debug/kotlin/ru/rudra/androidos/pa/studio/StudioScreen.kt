@@ -24,7 +24,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import ru.rudra.androidos.pa.ui.DailyPlanScreen
 import ru.rudra.androidos.pa.ui.InboxScreen
+import ru.rudra.androidos.pa.ui.UiDailyPlanAction
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiRecording
 import ru.rudra.androidos.pa.ui.TaskBoardScreen
@@ -104,6 +106,11 @@ fun StudioScreen(
             )
             if (inspector) InspectorPanel(state, actions)
             SyncPanel(state.sync) { action -> dispatch(action) }
+            DailyPlanScreen(state.dailyPlan, onAction = { action ->
+                when (action) {
+                    is UiDailyPlanAction.CompleteTask -> dispatch(StudioAction.CompleteTask(action.id))
+                }
+            })
             TaskBoardScreen(state.board, onAction = { action ->
                 when (action) {
                     is UiTaskBoardAction.MoveTask -> dispatch(StudioAction.MoveTask(action.taskId, action.targetColumnId))

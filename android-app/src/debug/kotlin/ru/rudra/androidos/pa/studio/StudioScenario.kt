@@ -1,8 +1,11 @@
 package ru.rudra.androidos.pa.studio
 
+import ru.rudra.androidos.pa.ui.UiDailyPlanState
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxState
+import ru.rudra.androidos.pa.ui.UiPlanBucket
+import ru.rudra.androidos.pa.ui.UiPlanItem
 import ru.rudra.androidos.pa.ui.UiTaskBoardAction
 import ru.rudra.androidos.pa.ui.UiTaskBoardState
 import ru.rudra.androidos.pa.ui.UiTaskCard
@@ -29,6 +32,7 @@ data class StudioUiState(
     val pendingApproval: PendingApproval? = null,
     val sync: StudioSyncState = StudioSyncState(),
     val board: UiTaskBoardState = defaultBoard(),
+    val dailyPlan: UiDailyPlanState = defaultDailyPlan(),
 ) {
     fun toUiInboxState(): UiInboxState = UiInboxState(
         items = items.map { item ->
@@ -47,6 +51,36 @@ private fun defaultBoard() = UiTaskBoardState(
         UiTaskColumn("ready", "Ready"),
         UiTaskColumn("progress", "In progress", listOf(UiTaskCard("task-1", "Подготовить план проекта", "AndroidOS", "Friday", "High"))),
         UiTaskColumn("done", "Done"),
+    ),
+)
+
+private fun defaultDailyPlan() = UiDailyPlanState(
+    title = "Today",
+    subtitle = "2026-09-29 · Tuesday",
+    buckets = listOf(
+        UiPlanBucket(
+            "OVERDUE",
+            "Overdue",
+            listOf(UiPlanItem("plan-1", "Отправить отчёт за прошлую неделю", "2026-09-27", "High")),
+        ),
+        UiPlanBucket(
+            "TODAY",
+            "Today",
+            listOf(
+                UiPlanItem("plan-2", "Позвонить Анне и обсудить встречу", "2026-09-29", "High"),
+                UiPlanItem("plan-3", "Проверить макет инбокса", "2026-09-29", "Medium"),
+            ),
+        ),
+        UiPlanBucket(
+            "UPCOMING",
+            "Upcoming",
+            listOf(UiPlanItem("plan-4", "Встреча с командой", "2026-10-02")),
+        ),
+        UiPlanBucket(
+            "NO_DUE",
+            "No due date",
+            listOf(UiPlanItem("plan-5", "Идея: голосовые шаблоны для быстрых задач")),
+        ),
     ),
 )
 
@@ -86,6 +120,7 @@ sealed interface StudioAction {
     data object Retry : StudioAction
     data object Reset : StudioAction
     data class MoveTask(val taskId: String, val targetColumnId: String) : StudioAction
+    data class CompleteTask(val taskId: String) : StudioAction
 }
 
 fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = when (action) {
@@ -152,7 +187,13 @@ fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = wh
     StudioAction.Retry -> if (state.error != null) state.copy(error = null, items = StudioScenario.CAPTURED.toUiState().items) else state
     StudioAction.Reset -> state.scenario.toUiState()
     is StudioAction.MoveTask -> state.copy(board = moveTask(state.board, action.taskId, action.targetColumnId))
+    is StudioAction.CompleteTask -> state.copy(dailyPlan = completePlanTask(state.dailyPlan, action.taskId))
 }
+
+private fun completePlanTask(plan: UiDailyPlanState, taskId: String): UiDailyPlanState =
+    plan.copy(buckets = plan.buckets.map { bucket ->
+        bucket.copy(items = bucket.items.filterNot { it.id == taskId })
+    })
 
 private fun moveTask(board: UiTaskBoardState, taskId: String, targetColumnId: String): UiTaskBoardState {
     val task = board.columns.flatMap { it.cards }.firstOrNull { it.id == taskId } ?: return board
