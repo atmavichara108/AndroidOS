@@ -49,6 +49,7 @@ data class PendingApproval(
     val kind: String,
     val previewTitle: String,
     val triggerLabel: String? = null,
+    val calendarLabel: String? = null,
 )
 
 sealed interface UiInboxAction {
@@ -187,6 +188,9 @@ private fun ApprovalPanel(
                 Text("Create ${approval.kind.lowercase()}: ${approval.previewTitle}")
                 approval.triggerLabel?.let { label ->
                     Text(label, style = MaterialTheme.typography.titleSmall)
+                }
+                approval.calendarLabel?.let { label ->
+                    Text(label, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },

@@ -127,6 +127,8 @@ class MainActivity : ComponentActivity() {
     private fun requestRuntimePermissions() {
         val perms = buildList {
             add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.READ_CALENDAR)
+            add(Manifest.permission.WRITE_CALENDAR)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }.toTypedArray()
         requestPermissions.launch(perms)
@@ -333,6 +335,7 @@ private fun InboxScreenHost(
                             kind = kind,
                             previewTitle = title,
                             triggerLabel = planned.label,
+                            calendarLabel = calendarPreviewLabel(kind, planned.triggerAt),
                         )
                         reload()
                     }.start()
@@ -654,6 +657,12 @@ private fun approve(
                     context, reminderId, entityId, Instant.parse(triggerAt).toEpochMilli(),
                 )
             }
+            if (kind in KIND_START_KEYS) {
+                val sinkResult = ru.rudra.androidos.pa.calendar.SystemCalendarSink(context).write(
+                    ru.rudra.androidos.pa.domain.calendar.CalendarEventPlanner.single(title, triggerAt),
+                )
+                android.util.Log.d("PA_APPROVE", "calendar write for $entityId: $sinkResult")
+            }
             android.util.Log.d(
                 "PA_APPROVE",
                 "created $kind entity=$entityId title='$title' reminder=$reminderId at $triggerAt",
@@ -678,6 +687,20 @@ private data class PlannedReminder(
     val triggerAt: String?,
     val label: String?,
 )
+
+/**
+ * Human-readable preview of the system-calendar write that Confirm will attempt,
+ * or null for kinds that never hit a calendar. Time-scoped kinds without a parsed
+ * trigger still get one — they fall back to the default delay on approve.
+ */
+private fun calendarPreviewLabel(kind: String, triggerAt: String?): String? {
+    if (kind !in KIND_START_KEYS) return null
+    if (triggerAt != null) {
+        val local = Instant.parse(triggerAt).atZone(java.time.ZoneId.systemDefault())
+        return "➜ в календарь: ${local.toLocalDate()} ${local.toLocalTime().withSecond(0).withNano(0)}"
+    }
+    return "➜ в календарь: время по умолчанию (+1ч)"
+}
 
 /**
  * Turns an approval title into a reminder trigger via the domain ReminderPlanner.
