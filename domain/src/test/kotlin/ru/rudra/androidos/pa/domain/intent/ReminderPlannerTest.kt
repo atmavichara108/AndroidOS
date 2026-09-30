@@ -100,4 +100,36 @@ class ReminderPlannerTest {
         assertEquals(LocalDate.of(2026, 9, 30), localDate(d.triggerAt))
         assertEquals(LocalTime.of(12, 0), localTime(d.triggerAt))
     }
+
+    @Test
+    fun `spoken hour tomorrow sets nine`() {
+        val d = ReminderPlanner.decide("встреча завтра в девять", IntentKind.EVENT, now, zone)
+        assertTrue(d.needsReminder)
+        assertEquals(LocalDate.of(2026, 9, 30), localDate(d.triggerAt))
+        assertEquals(LocalTime.of(9, 0), localTime(d.triggerAt))
+    }
+
+    @Test
+    fun `spoken hour with evening marker adds twelve`() {
+        val d = ReminderPlanner.decide("ужин в шесть вечера", IntentKind.EVENT, now, zone)
+        assertTrue(d.needsReminder)
+        assertEquals(LocalDate.of(2026, 9, 29), localDate(d.triggerAt))
+        assertEquals(LocalTime.of(18, 0), localTime(d.triggerAt))
+    }
+
+    @Test
+    fun `spoken hour after weekday still parses the hour`() {
+        // 2026-09-29 is a Tuesday; next Friday is 2026-10-02.
+        val d = ReminderPlanner.decide("тренировка в пятницу в семь", IntentKind.TASK, now, zone)
+        assertTrue(d.needsReminder)
+        assertEquals(LocalDate.of(2026, 10, 2), localDate(d.triggerAt))
+        assertEquals(LocalTime.of(7, 0), localTime(d.triggerAt))
+    }
+
+    @Test
+    fun `spoken noon stays twelve`() {
+        val d = ReminderPlanner.decide("встреча в полдень", IntentKind.EVENT, now, zone)
+        assertTrue(d.needsReminder)
+        assertEquals(LocalTime.of(12, 0), localTime(d.triggerAt))
+    }
 }

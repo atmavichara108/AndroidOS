@@ -29,8 +29,28 @@ data class ReminderDecision(
 object ReminderPlanner {
 
     private val clockTime: Regex = Regex("""\b(\d{1,2}):(\d{2})\b""")
-    private val wordHour: Regex = Regex("""\bв (\d{1,2}) (час|часа|часов)\b""")
+    private val wordHour: Regex = Regex("""\bв (\d{1,2})( час| часа| часов)?\b""")
+    // Spoken hour, e.g. "в девять", "в шесть вечера". The "часов" word is optional.
+    private val wordHourText: Regex = Regex("""\bв ([а-яё]+)( час| часа| часов)?( утра| дня| вечера| ночи)?\b""")
     private val offset: Regex = Regex("""\bчерез (\d{1,4}) (минут|минуту|час|часа|часов|день|дня|дней|недел\w*)\b""")
+
+    // Spoken hour words -> 24h hour. "двенадцать"/"двенадцать часов" stays 12,
+    // "полдень" -> 12, "полночь" -> 0. Digit forms are handled by [wordHour].
+    private val hourWords: Map<String, Int> = mapOf(
+        "один" to 1, "одного" to 1, "одном" to 1,
+        "два" to 2, "двух" to 2,
+        "три" to 3, "трёх" to 3, "трех" to 3,
+        "четыре" to 4, "четырёх" to 4, "четырех" to 4,
+        "пять" to 5, "пяти" to 5,
+        "шесть" to 6, "шести" to 6,
+        "семь" to 7, "семи" to 7,
+        "восемь" to 8, "восьми" to 8,
+        "девять" to 9, "девяти" to 9,
+        "десять" to 10, "десяти" to 10,
+        "одиннадцать" to 11, "одиннадцати" to 11,
+        "двенадцать" to 12, "двенадцати" to 12,
+        "полдень" to 12, "полночь" to 0,
+    )
 
     private val weekdayNames: Map<String, Int> = mapOf(
         "понедельник" to 1, "вторник" to 2, "среда" to 3, "среду" to 3,
@@ -79,15 +99,29 @@ object ReminderPlanner {
         if (clock != null) {
             val hour = clock.groupValues[1].toInt()
             val minute = clock.groupValues[2].toInt()
-            val day = if (tomorrow) today.plusDays(1) else today
+            val day = resolveDay(lower, today)
             return day.atTime(LocalTime.of(hour, minute)).atZone(zone).toInstant().toString()
         }
 
         val wordHourMatch = wordHour.find(lower)
         if (wordHourMatch != null) {
             val hour = wordHourMatch.groupValues[1].toInt()
-            val day = if (tomorrow) today.plusDays(1) else today
+            val day = resolveDay(lower, today)
             return day.atTime(LocalTime.of(hour, 0)).atZone(zone).toInstant().toString()
+        }
+
+        wordHourText.findAll(lower).forEach { match ->
+            val spoken = match.groupValues[1]
+            val base = hourWords[spoken]
+            if (base != null) {
+                var hour = base
+                val period = match.groupValues[3].trim()
+                val pm = period == "вечера" || period == "ночи"
+                if (pm && hour < 12) hour += 12
+                if (period == "утра" && hour == 12) hour = 0
+                val day = resolveDay(lower, today)
+                return day.atTime(LocalTime.of(hour, 0)).atZone(zone).toInstant().toString()
+            }
         }
 
         if (tomorrow) {
@@ -101,6 +135,19 @@ object ReminderPlanner {
         }
 
         return null
+    }
+
+    /**
+     * Resolves the day a time cue lands on. "завтра" wins, else the first named
+     * weekday in the text, else today. Lets "в пятницу в семь" and
+     * "завтра в девять" both attach the parsed hour to the right day.
+     */
+    private fun resolveDay(lower: String, today: LocalDate): LocalDate {
+        if (lower.contains("завтра")) return today.plusDays(1)
+        for ((word, iso) in weekdayNames) {
+            if (lower.contains(word)) return nextWeekday(today, iso)
+        }
+        return today
     }
 
     private fun nextWeekday(today: LocalDate, isoWeekday: Int): LocalDate {
