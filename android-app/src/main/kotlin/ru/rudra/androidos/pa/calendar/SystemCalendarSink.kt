@@ -26,11 +26,24 @@ class SystemCalendarSink(private val context: Context) : CalendarSink {
 
     override fun engineId(): String = "system-calendar"
 
+    /**
+     * Human-readable name of the calendar an approval would write to, or null
+     * when the app cannot reach one (permission not granted, no writable
+     * calendar). Callers show this next to the reminder time so the user sees
+     * where the event lands before confirming; it reads only, so it is safe to
+     * call while rendering an approval preview and never writes anything.
+     */
+    fun previewLabel(): String? {
+        if (!hasReadPermission()) return null
+        val calendar = writableCalendar()
+        return calendar?.name
+    }
+
     override fun write(event: CalendarEvent): CalendarWriteResult {
         if (!hasWritePermission()) {
             return CalendarWriteResult.Unavailable("WRITE_CALENDAR not granted")
         }
-        val calendarId = writableCalendarId()
+        val calendar = writableCalendar()
             ?: return CalendarWriteResult.Unavailable("no writable calendar on device")
 
         return try {
@@ -39,7 +52,7 @@ class SystemCalendarSink(private val context: Context) : CalendarSink {
                 ?: (startMillis + DEFAULT_DURATION_MILLIS)
 
             val values = ContentValues().apply {
-                put(CalendarContract.Events.CALENDAR_ID, calendarId)
+                put(CalendarContract.Events.CALENDAR_ID, calendar.id)
                 put(CalendarContract.Events.TITLE, event.title)
                 put(CalendarContract.Events.DTSTART, startMillis)
                 put(CalendarContract.Events.DTEND, endMillis)
@@ -76,9 +89,25 @@ class SystemCalendarSink(private val context: Context) : CalendarSink {
     private fun hasWritePermission(): Boolean =
         context.checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
 
-    /** First writable calendar: the account the user's own calendar app shows. */
-    private fun writableCalendarId(): Long? {
-        val projection = arrayOf(CalendarContract.Calendars._ID)
+    private fun hasReadPermission(): Boolean =
+        context.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+
+    private data class WritableCalendar(val id: Long, val name: String)
+
+    /**
+     * A calendar this app may write to: the local (account-less) one when the
+     * device has it, otherwise the first calendar with contributor rights or
+     * better. Deliberately not ordered by IS_PRIMARY — that column is not
+     * exposed by every provider (it is not on this device), and an unsupported
+     * sort column fails the whole query, which would report "no writable
+     * calendar" on a phone that has several.
+     */
+    private fun writableCalendar(): WritableCalendar? {
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+        )
         val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?"
         val args = arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
         return runCatching {
@@ -87,9 +116,18 @@ class SystemCalendarSink(private val context: Context) : CalendarSink {
                 projection,
                 selection,
                 args,
-                "${CalendarContract.Calendars.IS_PRIMARY} DESC",
+                null,
             )?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getLong(0) else null
+                var fallback: WritableCalendar? = null
+                while (cursor.moveToNext()) {
+                    val candidate = WritableCalendar(
+                        id = cursor.getLong(0),
+                        name = cursor.getString(2) ?: "календарь",
+                    )
+                    if (cursor.getString(1) == CalendarContract.ACCOUNT_TYPE_LOCAL) return@use candidate
+                    if (fallback == null) fallback = candidate
+                }
+                fallback
             }
         }.getOrNull()
     }
