@@ -1,49 +1,85 @@
 ---
 type: research
-title: Liya — open-source Jev analog audit
+title: Laya — open-source Jev analog audit (corrected from "liya")
 project: AndroidOS
-status: [проверить]  # user-claimed, not yet verified as real/discoverable
+status: confirmed
 timestamp: 2026-09-30
 ---
 
-# Liya — "open-source analog of Jev" audit
+# Laya — the open-source Jev analog
 
-The user's friend claimed there is an open-source classifier analogous to
-Jev (TypeSafe AI) called "liya". This audit records what we could and could
-not verify.
+The user's friend mentioned an open-source classifier like Jev called "liya".
+The name is actually **Laya** (Russian spelling "лия"). The canonical project is
+mature and well-adopted. This is a strong candidate to back the `ExtractionEngine`
+port that previously assumed a cloud Jev adapter.
 
-## Baseline (Jev)
+## What Laya is
 
-Jev (TypeSafe AI) is a proprietary "System One" classifier: typed inputs,
-typed outputs + probabilities + confidence (Choice / Score / Noul primitives),
-no chat/text. See jev-classifier.md. On OpenRouter as `typesafe/jev-latest`,
-also Polza.AI (RU). No official open-source weights.
+**Laya** (`github.com/NandhaKishorM/laya`, ~29k stars, Apache-2.0, `pip install laya`)
+is a **multilingual, non-autoregressive System-1 decision engine** — the same
+category as TypeSafe's proprietary Jev:
 
-## Search performed (2026-09-30)
+- Typed decisions over any state (text/email/ticket/JSON) in a **single forward
+  pass** (~33 ms, ~7.2 ms/question batched on T4). No text generation, so nothing
+  to parse and nothing to hallucinate.
+- Three primitives exactly like Jev: **`choice` / `score` / `noul`**, with
+  calibrated confidence (`answer_confidence`) and opt-in `min_confidence` abstention.
+- Trained with reinforcement learning against strictly proper scoring rules
+  (RLCD), same as Jev.
 
-- GitHub repo search `liya classifier`: **0 results**.
-- GitHub repo search `"Liya" model`: 5 results, all unrelated
-  (Liya.jl Julia causal-reactive framework, an industrial-image
-  drift-detection paper, etc.). No classifier/LLM project matching.
-- Google and DuckDuckGo keyword searches: no usable hits for a Jev-like
-  open-source "Liya".
+## Checkpoints (open weights on HF, `convaiinnovations/laya`)
 
-## Conclusion
+| checkpoint | encoder | params | context | use for |
+|------------|---------|--------|---------|---------|
+| `laya` | ModernBERT-large | 421M | 512 | English |
+| `laya-multilingual` | mmBERT-base | 322M | 1024 (to 8192) | **100+ languages incl. Russian**, 2x faster |
+| `laya-typed-decisions` | ModernBERT-large | 421M | 1024 | the typed-decisions workflows |
 
-As of this date we could **not** find a mature, discoverable open-source
-classifier model named "Liya" that is a drop-in Jev analog. Either it is
-very new/obscure, a private/renamed project, or the name is misremembered.
-Marked `[проверить]`: the friend likely knows a specific project — ask for a
-URL/org before spending design time on it.
+The `Router` auto-detects script/language and dispatches to the right checkpoint.
+Russian text routes to `laya-multilingual`.
 
-## If a specific project surfaces later
+## Why this beats the cloud Jev for Pip-Boy
 
-Re-screen it against the Jev fit criteria in jev-classifier.md:
-- primitive set (Choice/Score/Noul) and typed I/O
-- offline/on-device viability + runtime size (we are on-device-first)
-- license + exit path (AGENTS.md OSS-first)
-- whether raw data must leave the device (privacy gate)
+1. **Local / private**: open Apache-2.0 weights can run on-device or self-hosted.
+   No raw transcript leaves the device — matches the ADR privacy posture that the
+   cloud Jev path violated (TypeSafe's US-hosted service + "do not submit
+   confidential info" terms).
+2. **Jev-compatible wire**: `laya.serve` exposes `POST /v1/systemone` on the same
+   schema Jev returns; a Jev client just repoints its baseUrl. But we do not
+   need the cloud at all — we can run the checkpoint locally.
+3. **ONNX/on-device path**: `ONNXAgent` + `scripts/export_onnx.py --quantize`
+   writes per-channel INT8 for CPU; the `laya-ts` SDK runs inference directly in
+   the browser via local ONNX runtime (no Python server). This maps to our Android
+   stack (sherpa-onnx already bundles ONNX Runtime for arm64), and to the
+   laptop peer as a plain process.
+4. **Fine-tunable**: domain decisions jump from 0.362 -> 0.766 accuracy when
+   fine-tuned on the project's own decision labels — relevant as we collect
+   real approval decisions.
+5. **Honest limits**: option budget per question is finite and known (100 max on
+   the server, ~20 with long labels); narrow large option sets with `predict_shortlist`.
+
+## Fit vs the `ExtractionEngine` port (jev-classifier.md)
+
+Replaces the provisional external-adapter design with an on-device model:
+
+- typed `choice`/`score`/`noul` answers -> the `ExtractionProposal` + confidence
+  contract
+- runs behind the same `engineId`/propose port
+- `min_confidence` gating -> the confidence-gated approval (RequestApprove /
+  ConfirmApproval) we already built
+- Russian supported natively via `laya-multilingual`
+
+## Risk / to verify on device
+
+- Runtime + RAM of the mmBERT-base 322M checkpoint on a mid-range Xiaomi —
+  needs a real-device benchmark (RTF, RSS), same as STT was.
+- INT8 ONNX export quality vs fp32 for Russian decisions.
+- Whether `laya-ts`/ONNX agent is JVM-usable directly or needs a small native
+  bridge (sherpa-onnx ships prebuilt .so; a similar packaging for Laya's ONNX
+  session is the path).
 
 ## Evidence
-- GitHub search (0 results for `liya classifier`)
-- No authoritative source found yet — this is an open `[проверить]` fact.
+
+- https://github.com/NandhaKishorM/laya (README, checkpoints, ONNX, Jev-compat)
+- https://huggingface.co/convaiinnovations/laya and /laya-multilingual
+- The earlier "liya-audit" conclusion (no Liya found) is superseded by this.
