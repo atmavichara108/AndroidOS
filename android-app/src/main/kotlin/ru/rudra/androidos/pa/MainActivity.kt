@@ -80,6 +80,12 @@ import ru.rudra.androidos.pa.ui.TaskBoardScreen
 import ru.rudra.androidos.pa.ui.UiTaskBoardState
 import ru.rudra.androidos.pa.ui.UiTaskCard
 import ru.rudra.androidos.pa.ui.UiTaskColumn
+import ru.rudra.androidos.pa.ui.DailyPlanScreen
+import ru.rudra.androidos.pa.ui.UiDailyPlanState
+import ru.rudra.androidos.pa.ui.UiDailyPlanAction
+import ru.rudra.androidos.pa.ui.dailyPlanToUiState
+import ru.rudra.androidos.pa.domain.plan.DailyPlanItem
+import ru.rudra.androidos.pa.domain.plan.DailyPlanner
 import java.io.File
 import android.os.Environment
 
@@ -152,6 +158,7 @@ private fun InboxScreenHost(
 ) {
     var ui by remember { mutableStateOf(UiInboxState(isLoading = true)) }
     var board by remember { mutableStateOf(UiTaskBoardState(title = "Approved tasks")) }
+    var dailyPlan by remember { mutableStateOf(UiDailyPlanState(title = "Today")) }
     var selectedScreen by remember { mutableStateOf("INBOX") }
     var recordings by remember { mutableStateOf(emptyList<UiRecording>()) }
     val captureState by RecordingBus.state.collectAsState()
@@ -232,6 +239,7 @@ private fun InboxScreenHost(
                     .mapNotNull { row ->
                         runCatching {
                             val attrs = org.json.JSONObject(row.attributesJson)
+                            if (attrs.optString("status") == "DONE") return@mapNotNull null
                             UiTaskCard(
                                 id = row.id,
                                 title = attrs.optString("title").ifBlank { "Untitled task" },
@@ -248,6 +256,8 @@ private fun InboxScreenHost(
                     columns = listOf(UiTaskColumn("BACKLOG", "Backlog", tasks)),
                 )
             }.getOrElse { UiTaskBoardState(title = "Approved tasks") }
+            dailyPlan = runCatching { buildDailyPlanState(db) }
+                .getOrElse { UiDailyPlanState(title = "Today") }
         }.start()
     }
 
@@ -259,13 +269,17 @@ private fun InboxScreenHost(
 
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-            if (selectedScreen == "INBOX") {
-                Button(onClick = { selectedScreen = "INBOX" }) { Text("Inbox") }
-                OutlinedButton(onClick = { selectedScreen = "TASKS" }) { Text("Tasks") }
-            } else {
-                OutlinedButton(onClick = { selectedScreen = "INBOX" }) { Text("Inbox") }
-                Button(onClick = { selectedScreen = "TASKS" }) { Text("Tasks") }
+            @Composable
+            fun NavButton(key: String, label: String) {
+                if (selectedScreen == key) {
+                    Button(onClick = { selectedScreen = key }) { Text(label) }
+                } else {
+                    OutlinedButton(onClick = { selectedScreen = key }) { Text(label) }
+                }
             }
+            NavButton("INBOX", "Inbox")
+            NavButton("TODAY", "Today")
+            NavButton("TASKS", "Tasks")
             Spacer(Modifier.weight(1f))
             val studioIntent = remember(context) {
                 Intent().setComponent(
@@ -283,6 +297,16 @@ private fun InboxScreenHost(
         }
         if (selectedScreen == "TASKS") {
             TaskBoardScreen(state = board)
+        } else if (selectedScreen == "TODAY") {
+            DailyPlanScreen(
+                state = dailyPlan,
+                onAction = { action ->
+                    when (action) {
+                        is UiDailyPlanAction.CompleteTask ->
+                            completeTask(db, store, deviceId, action.id) { reload() }
+                    }
+                },
+            )
         } else InboxScreen(
         state = ui,
         onAction = { action ->
@@ -660,6 +684,14 @@ private fun approve(
                 if (kind == "TASK") {
                     attachProjectId?.let { put("projectId", it) }
                     if (recurring == true) put("recurring", "true")
+                    // A recognised time cue gives the task a due date, so it can
+                    // be grouped in the Today view (overdue/today/upcoming).
+                    planned.triggerAt?.let { ta ->
+                        val due = Instant.parse(ta)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate()
+                        put("dueAt", due.toString())
+                    }
                 }
             }
             val problems = registry.validate(
@@ -883,4 +915,100 @@ private fun kindLabelRu(kind: IntentKind): String = when (kind) {
     IntentKind.IDEA -> "Идея"
     IntentKind.NOTE -> "Заметка"
     IntentKind.NO_INTENT -> "Заметка"
+}
+
+/**
+ * Builds the "Today" projection from approved TASK entities: parses each task's
+ * stored dueAt into a [java.time.LocalDate], resolves its project name from the
+ * approved PROJECT entities, groups via the domain [DailyPlanner], and maps to
+ * the presentation state. Tasks marked done (attribute status=DONE) are
+ * excluded. Pure read over Room; safe to call on a background thread.
+ */
+private fun buildDailyPlanState(db: PaDatabase): UiDailyPlanState {
+    val zone = java.time.ZoneId.systemDefault()
+    val today = java.time.LocalDate.now(zone)
+    val approved = db.entityDao().approved()
+    val projectNames: Map<String, String> = approved
+        .filter { it.type == "PROJECT" }
+        .mapNotNull { row ->
+            val name = runCatching { org.json.JSONObject(row.attributesJson).optString("title", "") }
+                .getOrDefault("")
+            if (name.isBlank()) null else row.id to name
+        }
+        .toMap()
+    val items = approved
+        .asSequence()
+        .filter { it.type == "TASK" }
+        .mapNotNull { row ->
+            runCatching {
+                val attrs = org.json.JSONObject(row.attributesJson)
+                if (attrs.optString("status") == "DONE") return@mapNotNull null
+                val dueAt = attrs.optString("dueAt").takeIf(String::isNotBlank)
+                    ?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+                val projectId = attrs.optString("projectId").takeIf(String::isNotBlank)
+                DailyPlanItem(
+                    id = row.id,
+                    title = attrs.optString("title").ifBlank { "Untitled task" },
+                    dueAt = dueAt,
+                    priority = attrs.optString("priority").takeIf(String::isNotBlank),
+                    projectId = projectId,
+                    project = projectId?.let { projectNames[it] },
+                )
+            }.getOrNull()
+        }
+        .toList()
+    val plan = DailyPlanner.plan(items, today)
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM")
+    return dailyPlanToUiState(
+        plan,
+        title = "Today",
+        subtitle = today.toString(),
+        dueFormat = { it.format(fmt) },
+    )
+}
+
+/**
+ * Marks an approved TASK as done by setting its `status` attribute to DONE and
+ * recording the change, so it drops out of the Today view and the board without
+ * being deleted. Runs on a background thread.
+ */
+private fun completeTask(
+    db: PaDatabase,
+    store: RoomLocalStore,
+    deviceId: String,
+    taskId: String,
+    onDone: () -> Unit,
+) {
+    Thread {
+        try {
+            val row = db.entityDao().byId(taskId)
+            if (row != null) {
+                val attrs = org.json.JSONObject(row.attributesJson)
+                attrs.put("status", "DONE")
+                val newVersion = row.version + 1
+                val now = Instant.now().toString()
+                db.runInTransaction {
+                    db.entityDao().updateFields(taskId, row.type, attrs.toString(), row.status, newVersion)
+                    store.applyChange(
+                        Change(
+                            id = UUID.randomUUID().toString(),
+                            entityId = taskId,
+                            operation = ChangeOperation.UPDATE,
+                            patch = mapOf("status" to "DONE"),
+                            actorDeviceId = deviceId,
+                            baseVersion = row.version,
+                            occurredAt = now,
+                            logicalClock = null,
+                            idempotencyKey = UUID.randomUUID().toString(),
+                            provenance = emptyList(),
+                            retentionClass = RetentionClass.PERMANENT,
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PA_APPROVE", "completeTask failed for $taskId", e)
+        }
+        onDone()
+    }.start()
 }
