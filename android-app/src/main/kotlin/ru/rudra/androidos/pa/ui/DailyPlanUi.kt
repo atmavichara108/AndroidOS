@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 data class UiPlanItem(
@@ -70,8 +71,13 @@ fun DailyPlanScreen(
 
 @Composable
 private fun PlanBucket(bucket: UiPlanBucket, onAction: (UiDailyPlanAction) -> Unit) {
+    val overdue = bucket.id == "OVERDUE"
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${bucket.title} (${bucket.items.size})", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "${bucket.title} (${bucket.items.size})",
+            style = MaterialTheme.typography.titleMedium,
+            color = if (overdue) MaterialTheme.colorScheme.error else Color.Unspecified,
+        )
         bucket.items.forEach { item ->
             Card(Modifier.fillMaxWidth()) {
                 Row(
@@ -83,8 +89,14 @@ private fun PlanBucket(bucket: UiPlanBucket, onAction: (UiDailyPlanAction) -> Un
                         verticalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Text(item.title, style = MaterialTheme.typography.bodyLarge)
-                        item.dueLabel?.let { Text("Due: $it", style = MaterialTheme.typography.bodySmall) }
-                        item.priority?.let { Text("Priority: $it", style = MaterialTheme.typography.labelSmall) }
+                        item.dueLabel?.let {
+                            Text(
+                                "Due: $it",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (overdue) MaterialTheme.colorScheme.error else Color.Unspecified,
+                            )
+                        }
+                        PriorityTag(item.priority)
                     }
                     TextButton(onClick = { onAction(UiDailyPlanAction.CompleteTask(item.id)) }) {
                         Text("Done")

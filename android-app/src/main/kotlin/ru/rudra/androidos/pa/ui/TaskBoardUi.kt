@@ -77,7 +77,7 @@ private fun TaskCard(task: UiTaskCard) {
             Text(task.title, style = MaterialTheme.typography.bodyLarge)
             task.project?.let { Text("Project: $it", style = MaterialTheme.typography.bodySmall) }
             task.dueLabel?.let { Text("Due: $it", style = MaterialTheme.typography.bodySmall) }
-            task.priority?.let { Text("Priority: $it", style = MaterialTheme.typography.labelSmall) }
+            PriorityTag(task.priority)
         }
     }
 }
