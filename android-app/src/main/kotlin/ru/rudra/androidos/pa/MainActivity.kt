@@ -51,7 +51,11 @@ import ru.rudra.androidos.pa.domain.model.InboxState
 import ru.rudra.androidos.pa.domain.model.RetentionClass
 import ru.rudra.androidos.pa.domain.model.Transcript
 import ru.rudra.androidos.pa.domain.model.TranscriptStatus
+import ru.rudra.androidos.pa.domain.intent.IntentClassifier
 import ru.rudra.androidos.pa.domain.intent.IntentKind
+import ru.rudra.androidos.pa.domain.intent.ProjectAttachment
+import ru.rudra.androidos.pa.domain.intent.ProjectInfo
+import ru.rudra.androidos.pa.domain.intent.ProjectResolver
 import ru.rudra.androidos.pa.domain.intent.ReminderDecision
 import ru.rudra.androidos.pa.domain.intent.ReminderPlanner
 import ru.rudra.androidos.pa.domain.port.TranscriberResult
@@ -62,6 +66,7 @@ import ru.rudra.androidos.pa.recording.RecordingStore
 import ru.rudra.androidos.pa.reminder.ReminderScheduler
 import ru.rudra.androidos.pa.sync.SyncHooks
 import ru.rudra.androidos.pa.ui.InboxScreen
+import ru.rudra.androidos.pa.ui.ApprovalSuggestion
 import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiInboxItem
@@ -336,6 +341,7 @@ private fun InboxScreenHost(
                             previewTitle = title,
                             triggerLabel = planned.label,
                             calendarLabel = calendarPreviewLabel(kind, planned.triggerAt),
+                            suggestion = buildApprovalSuggestion(db, title, kind),
                         )
                         reload()
                     }.start()
@@ -748,4 +754,59 @@ private fun effectiveTitle(db: PaDatabase, inboxItemId: String, item: InboxItemR
         return item.body.orEmpty().trim()
     }
     return item?.body.orEmpty().trim()
+}
+
+/**
+ * Builds the non-binding [ApprovalSuggestion] shown above Confirm (P2-03). It
+ * runs the rule-based domain [IntentClassifier] and [ProjectResolver] over the
+ * capture title and reports what the app thinks it is — kind, confidence and
+ * project attachment — without ever changing what the user approves. The known
+ * projects come from APPROVED entities of type PROJECT. This is the same UI
+ * surface a future on-device model (Laya, WS-B) would feed once device-proven;
+ * only the source behind the strip changes.
+ */
+private fun buildApprovalSuggestion(db: PaDatabase, title: String, kind: String): ApprovalSuggestion? {
+    if (title.isBlank()) return null
+    return runCatching {
+        val guess = IntentClassifier().classify(title)
+        if (guess.kind == IntentKind.NO_INTENT) return@runCatching null
+
+        val projects = db.entityDao().approved()
+            .filter { it.type == "PROJECT" }
+            .mapNotNull { row ->
+                val projectTitle = runCatching {
+                    org.json.JSONObject(row.attributesJson).optString("title", "")
+                }.getOrDefault("")
+                if (projectTitle.isBlank()) null else ProjectInfo(row.id, projectTitle)
+            }
+        val resolution = ProjectResolver.resolve(title, guess.kind, projects)
+
+        val recommendedKey = when (guess.kind) {
+            IntentKind.EVENT, IntentKind.MEETING -> "EVENT"
+            else -> "TASK"
+        }
+        ApprovalSuggestion(
+            kindLabel = kindLabelRu(guess.kind),
+            confidence = (guess.confidence * 100).toInt().coerceIn(0, 100),
+            projectLabel = when (resolution.attachment) {
+                ProjectAttachment.KNOWN -> "проект «${resolution.matchedTitle}»"
+                ProjectAttachment.NEW -> "новый проект"
+                ProjectAttachment.NONE -> null
+            },
+            recurring = ProjectResolver.isRecurring(guess.kind),
+            recommended = recommendedKey == kind,
+        )
+    }.getOrNull()
+}
+
+/** Russian label for a classified intent kind, for the suggestion strip. */
+private fun kindLabelRu(kind: IntentKind): String = when (kind) {
+    IntentKind.TASK -> "Задача"
+    IntentKind.EVENT -> "Событие"
+    IntentKind.MEETING -> "Встреча"
+    IntentKind.PROJECT -> "Проект"
+    IntentKind.HABIT -> "Привычка"
+    IntentKind.IDEA -> "Идея"
+    IntentKind.NOTE -> "Заметка"
+    IntentKind.NO_INTENT -> "Заметка"
 }
