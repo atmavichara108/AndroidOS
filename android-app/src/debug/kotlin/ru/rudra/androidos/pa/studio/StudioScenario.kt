@@ -2,10 +2,13 @@ package ru.rudra.androidos.pa.studio
 
 import ru.rudra.androidos.pa.ui.UiDailyPlanState
 import ru.rudra.androidos.pa.ui.UiInboxItem
+import ru.rudra.androidos.pa.ui.ApprovalSuggestion
+import ru.rudra.androidos.pa.ui.ClarifyField
 import ru.rudra.androidos.pa.ui.PendingApproval
 import ru.rudra.androidos.pa.ui.UiInboxState
 import ru.rudra.androidos.pa.ui.UiPlanBucket
 import ru.rudra.androidos.pa.ui.UiPlanItem
+import ru.rudra.androidos.pa.ui.UiProjectOption
 import ru.rudra.androidos.pa.ui.UiTaskBoardAction
 import ru.rudra.androidos.pa.ui.UiTaskBoardState
 import ru.rudra.androidos.pa.ui.UiTaskCard
@@ -152,7 +155,26 @@ fun reduceStudio(state: StudioUiState, action: StudioAction): StudioUiState = wh
     is StudioAction.Delete -> state.copy(items = state.items.filterNot { it.id == action.id })
     is StudioAction.RequestApprove -> state.copy(
         pendingApproval = state.items.firstOrNull { it.id == action.id }?.let { item ->
-            PendingApproval(action.id, action.kind, item.transcriptText ?: item.body)
+            // The lab shows the full approval UX: suggestion strip + clarifying
+            // questions (KIND/PROJECT/RECURRING) so the design is reviewable
+            // without a device or the rule-based classifier.
+            PendingApproval(
+                id = action.id,
+                kind = action.kind,
+                previewTitle = item.transcriptText ?: item.body,
+                suggestion = ApprovalSuggestion(
+                    kindLabel = if (action.kind == "EVENT") "Событие" else "Задача",
+                    confidence = 50,
+                    projectLabel = "проект «Ремонт»",
+                    recurring = false,
+                    recommended = true,
+                ),
+                clarify = listOf(ClarifyField.KIND, ClarifyField.PROJECT, ClarifyField.RECURRING),
+                projectOptions = listOf(
+                    UiProjectOption("proj-remont", "Ремонт"),
+                    UiProjectOption("proj-work", "Работа"),
+                ),
+            )
         },
     )
     is StudioAction.ConfirmApproval -> state.copy(
