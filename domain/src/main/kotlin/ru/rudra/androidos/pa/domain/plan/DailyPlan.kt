@@ -14,6 +14,8 @@ data class DailyPlanItem(
     val title: String,
     val dueAt: LocalDate?,
     val priority: String? = null,
+    val projectId: String? = null,
+    val project: String? = null,
 )
 
 enum class DueStatus { OVERDUE, TODAY, UPCOMING, NO_DUE }
