@@ -10,7 +10,7 @@ import ru.rudra.androidos.pa.domain.model.EntityType
 object DefaultEntitySchemas {
 
     fun all(): List<EntitySchema> = listOf(
-        EntitySchema(EntityType("pa", "TASK"), required = setOf("title"), optional = setOf("dueAt", "priority", "projectId", "status")),
+        EntitySchema(EntityType("pa", "TASK"), required = setOf("title"), optional = setOf("dueAt", "priority", "projectId", "status", "recurring")),
         EntitySchema(EntityType("pa", "EVENT"), required = setOf("title", "startsAt"), optional = setOf("endsAt", "location")),
         EntitySchema(EntityType("pa", "CONTACT"), required = setOf("displayName"), optional = setOf("phone", "email", "org")),
         EntitySchema(EntityType("pa", "PROJECT"), required = setOf("title"), optional = setOf("description", "status", "parentProjectId")),

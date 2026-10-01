@@ -51,6 +51,8 @@ import ru.rudra.androidos.pa.domain.model.InboxState
 import ru.rudra.androidos.pa.domain.model.RetentionClass
 import ru.rudra.androidos.pa.domain.model.Transcript
 import ru.rudra.androidos.pa.domain.model.TranscriptStatus
+import ru.rudra.androidos.pa.domain.intent.ClarificationPlanner
+import ru.rudra.androidos.pa.domain.intent.ClarificationQuestion
 import ru.rudra.androidos.pa.domain.intent.IntentClassifier
 import ru.rudra.androidos.pa.domain.intent.IntentKind
 import ru.rudra.androidos.pa.domain.intent.ProjectAttachment
@@ -67,7 +69,9 @@ import ru.rudra.androidos.pa.reminder.ReminderScheduler
 import ru.rudra.androidos.pa.sync.SyncHooks
 import ru.rudra.androidos.pa.ui.InboxScreen
 import ru.rudra.androidos.pa.ui.ApprovalSuggestion
+import ru.rudra.androidos.pa.ui.ClarifyField
 import ru.rudra.androidos.pa.ui.PendingApproval
+import ru.rudra.androidos.pa.ui.UiProjectOption
 import ru.rudra.androidos.pa.ui.UiInboxAction
 import ru.rudra.androidos.pa.ui.UiInboxItem
 import ru.rudra.androidos.pa.ui.UiInboxState
@@ -335,20 +339,28 @@ private fun InboxScreenHost(
                         val row = db.inboxDao().byId(id)
                         val title = effectiveTitle(db, id, row)
                         val planned = planReminder(title, kind, Instant.now())
+                        val extras = buildApprovalExtras(db, title, kind)
                         pendingApproval = PendingApproval(
                             id = id,
                             kind = kind,
                             previewTitle = title,
                             triggerLabel = planned.label,
                             calendarLabel = calendarPreviewLabel(kind, planned.triggerAt),
-                            suggestion = buildApprovalSuggestion(db, title, kind),
+                            suggestion = extras.suggestion,
+                            clarify = extras.clarify,
+                            projectOptions = extras.projectOptions,
                         )
                         reload()
                     }.start()
                 }
                 is UiInboxAction.ConfirmApproval -> {
                     pendingApproval = null
-                    approve(db, store, context, deviceId, action.id, action.kind) { reload() }
+                    approve(
+                        db, store, context, deviceId, action.id, action.kind,
+                        projectId = action.projectId,
+                        newProject = action.newProject,
+                        recurring = action.recurring,
+                    ) { reload() }
                 }
                 UiInboxAction.CancelApproval -> {
                     pendingApproval = null
@@ -581,6 +593,9 @@ private fun approve(
     deviceId: String,
     inboxItemId: String,
     kind: String,
+    projectId: String? = null,
+    newProject: Boolean = false,
+    recurring: Boolean? = null,
     onDone: () -> Unit,
 ) {
     Thread {
@@ -593,16 +608,56 @@ private fun approve(
             val triggerAt = planned.triggerAt
                 ?: Instant.now().plusMillis(REMINDER_DELAY_MS).toString()
             val needsReminder = planned.triggerAt != null || kind in KIND_START_KEYS
-            // Schema-validated proposal (docs/architecture.md): only a known
-            // entity type with the required attributes may be approved. approve()
-            // only carries a title; the reminder trigger time doubles as the
-            // start for time-scoped kinds (EVENT/MEETING) so their schema passes.
             val registry = ru.rudra.androidos.pa.domain.entity.EntityRegistry(
                 ru.rudra.androidos.pa.domain.entity.DefaultEntitySchemas.all()
             )
+
+            // P2-03c: a chosen clarification answer may create a project and
+            // attach the task to it. A new project is created from the capture
+            // title; attachment (projectId) only applies to TASK, whose schema
+            // carries projectId. recurring is marked on the task's attributes.
+            val attachProjectId: String? = when {
+                newProject -> {
+                    val projId = UUID.randomUUID().toString()
+                    val projAttrs = mapOf("title" to title, "status" to "ACTIVE")
+                    val projProblems = registry.validate(
+                        ru.rudra.androidos.pa.domain.model.EntityType("pa", "PROJECT"),
+                        projAttrs,
+                    )
+                    if (projProblems.isEmpty()) {
+                        db.entityDao().insert(
+                            EntityRow(
+                                id = projId,
+                                type = "PROJECT",
+                                schemaVersion = 1,
+                                attributesJson = org.json.JSONObject(projAttrs).toString(),
+                                status = "APPROVED",
+                                version = 1,
+                                deletedAt = null,
+                            )
+                        )
+                        projId
+                    } else null
+                }
+                else -> projectId
+            }
+
+            // Schema-validated proposal (docs/architecture.md): only a known
+            // entity type with its required attributes may be approved. The
+            // reminder trigger doubles as startsAt for time-scoped kinds, NOTE
+            // keeps its text, and task-only extras (project/recurring) are added
+            // for TASK alone, where the schema allows them.
             val attrs = buildMap {
-                put("title", title)
+                if (kind == "NOTE") {
+                    put("text", title)
+                } else {
+                    put("title", title)
+                }
                 if (kind in KIND_START_KEYS) put("startsAt", triggerAt)
+                if (kind == "TASK") {
+                    attachProjectId?.let { put("projectId", it) }
+                    if (recurring == true) put("recurring", "true")
+                }
             }
             val problems = registry.validate(
                 ru.rudra.androidos.pa.domain.model.EntityType("pa", kind),
@@ -757,21 +812,24 @@ private fun effectiveTitle(db: PaDatabase, inboxItemId: String, item: InboxItemR
 }
 
 /**
- * Builds the non-binding [ApprovalSuggestion] shown above Confirm (P2-03). It
- * runs the rule-based domain [IntentClassifier] and [ProjectResolver] over the
- * capture title and reports what the app thinks it is — kind, confidence and
- * project attachment — without ever changing what the user approves. The known
- * projects come from APPROVED entities of type PROJECT. This is the same UI
- * surface a future on-device model (Laya, WS-B) would feed once device-proven;
- * only the source behind the strip changes.
+ * Everything the approval dialog needs beyond the title/trigger: the advisory
+ * [ApprovalSuggestion] strip (P2-03a), the clarifying questions to ask when the
+ * classifier/resolver is unsure (P2-03c), and the known projects to offer for
+ * the PROJECT question. Computed once from the rule-based domain over the
+ * capture title so RequestApprove makes a single pass. This is the same surface
+ * a future on-device model (Laya, WS-B) feeds; only the source changes.
  */
-private fun buildApprovalSuggestion(db: PaDatabase, title: String, kind: String): ApprovalSuggestion? {
-    if (title.isBlank()) return null
+private class ApprovalExtras(
+    val suggestion: ApprovalSuggestion?,
+    val clarify: List<ClarifyField>,
+    val projectOptions: List<UiProjectOption>,
+)
+
+private fun buildApprovalExtras(db: PaDatabase, title: String, kind: String): ApprovalExtras {
+    if (title.isBlank()) return ApprovalExtras(null, emptyList(), emptyList())
     return runCatching {
         val guess = IntentClassifier().classify(title)
-        if (guess.kind == IntentKind.NO_INTENT) return@runCatching null
-
-        val projects = db.entityDao().approved()
+        val projectInfos = db.entityDao().approved()
             .filter { it.type == "PROJECT" }
             .mapNotNull { row ->
                 val projectTitle = runCatching {
@@ -779,24 +837,37 @@ private fun buildApprovalSuggestion(db: PaDatabase, title: String, kind: String)
                 }.getOrDefault("")
                 if (projectTitle.isBlank()) null else ProjectInfo(row.id, projectTitle)
             }
-        val resolution = ProjectResolver.resolve(title, guess.kind, projects)
+        val resolution = ProjectResolver.resolve(title, guess.kind, projectInfos)
 
-        val recommendedKey = when (guess.kind) {
-            IntentKind.EVENT, IntentKind.MEETING -> "EVENT"
-            else -> "TASK"
+        val suggestion = if (guess.kind == IntentKind.NO_INTENT) null else {
+            val recommendedKey = when (guess.kind) {
+                IntentKind.EVENT, IntentKind.MEETING -> "EVENT"
+                else -> "TASK"
+            }
+            ApprovalSuggestion(
+                kindLabel = kindLabelRu(guess.kind),
+                confidence = (guess.confidence * 100).toInt().coerceIn(0, 100),
+                projectLabel = when (resolution.attachment) {
+                    ProjectAttachment.KNOWN -> "проект «${resolution.matchedTitle}»"
+                    ProjectAttachment.NEW -> "новый проект"
+                    ProjectAttachment.NONE -> null
+                },
+                recurring = ProjectResolver.isRecurring(guess.kind),
+                recommended = recommendedKey == kind,
+            )
         }
-        ApprovalSuggestion(
-            kindLabel = kindLabelRu(guess.kind),
-            confidence = (guess.confidence * 100).toInt().coerceIn(0, 100),
-            projectLabel = when (resolution.attachment) {
-                ProjectAttachment.KNOWN -> "проект «${resolution.matchedTitle}»"
-                ProjectAttachment.NEW -> "новый проект"
-                ProjectAttachment.NONE -> null
-            },
-            recurring = ProjectResolver.isRecurring(guess.kind),
-            recommended = recommendedKey == kind,
-        )
-    }.getOrNull()
+
+        val clarify = ClarificationPlanner.plan(guess, resolution).map { q ->
+            when (q) {
+                ClarificationQuestion.KIND -> ClarifyField.KIND
+                ClarificationQuestion.PROJECT -> ClarifyField.PROJECT
+                ClarificationQuestion.RECURRING -> ClarifyField.RECURRING
+            }
+        }
+        val projectOptions = projectInfos.map { UiProjectOption(it.id, it.title) }
+
+        ApprovalExtras(suggestion, clarify, projectOptions)
+    }.getOrDefault(ApprovalExtras(null, emptyList(), emptyList()))
 }
 
 /** Russian label for a classified intent kind, for the suggestion strip. */
