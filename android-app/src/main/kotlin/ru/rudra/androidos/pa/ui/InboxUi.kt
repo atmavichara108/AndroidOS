@@ -99,6 +99,7 @@ sealed interface UiInboxAction {
         val kind: String,
         val projectId: String? = null,
         val newProject: Boolean = false,
+        val newProjectTitle: String? = null,
         val recurring: Boolean? = null,
     ) : UiInboxAction
     data object CancelApproval : UiInboxAction
@@ -223,6 +224,7 @@ private fun ApprovalPanel(
     var kind by remember(approval.id) { mutableStateOf(approval.kind) }
     var projectId by remember(approval.id) { mutableStateOf<String?>(null) }
     var newProject by remember(approval.id) { mutableStateOf(false) }
+    var newProjectTitle by remember(approval.id) { mutableStateOf(approval.previewTitle) }
     var recurring by remember(approval.id) { mutableStateOf(approval.suggestion?.recurring ?: false) }
 
     androidx.compose.material3.AlertDialog(
@@ -266,24 +268,32 @@ private fun ApprovalPanel(
                                     )
                                 }
                             }
-                            ClarifyField.PROJECT -> ClarifyRow(
-                                label = "Проект:",
-                            ) {
-                                FilterChip(
-                                    selected = projectId == null && !newProject,
-                                    onClick = { projectId = null; newProject = false },
-                                    label = { Text("Без проекта") },
-                                )
-                                FilterChip(
-                                    selected = newProject,
-                                    onClick = { newProject = true; projectId = null },
-                                    label = { Text("Новый") },
-                                )
-                                approval.projectOptions.forEach { p ->
+                            ClarifyField.PROJECT -> {
+                                ClarifyRow(label = "Проект:") {
                                     FilterChip(
-                                        selected = projectId == p.id,
-                                        onClick = { projectId = p.id; newProject = false },
-                                        label = { Text(p.label) },
+                                        selected = projectId == null && !newProject,
+                                        onClick = { projectId = null; newProject = false },
+                                        label = { Text("Без проекта") },
+                                    )
+                                    FilterChip(
+                                        selected = newProject,
+                                        onClick = { newProject = true; projectId = null },
+                                        label = { Text("Новый") },
+                                    )
+                                    approval.projectOptions.forEach { p ->
+                                        FilterChip(
+                                            selected = projectId == p.id,
+                                            onClick = { projectId = p.id; newProject = false },
+                                            label = { Text(p.label) },
+                                        )
+                                    }
+                                }
+                                if (newProject) {
+                                    TextField(
+                                        value = newProjectTitle,
+                                        onValueChange = { newProjectTitle = it },
+                                        label = { Text("Название проекта") },
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
                             }
@@ -307,6 +317,7 @@ private fun ApprovalPanel(
                         kind = kind,
                         projectId = projectId,
                         newProject = newProject,
+                        newProjectTitle = if (newProject) newProjectTitle.trim().ifBlank { approval.previewTitle } else null,
                         recurring = if (approval.clarify.contains(ClarifyField.RECURRING)) recurring else null,
                     ),
                 )
