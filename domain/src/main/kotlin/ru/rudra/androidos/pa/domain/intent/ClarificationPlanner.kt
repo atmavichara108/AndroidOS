@@ -27,7 +27,10 @@ object ClarificationPlanner {
     /**
      * Produces the questions to ask for [guess] and [resolution].
      *
-     * - Unknown kind ([IntentKind.NO_INTENT]) always asks [ClarificationQuestion.KIND].
+     * - Asks [ClarificationQuestion.KIND] when the kind is unknown
+     *   ([IntentKind.NO_INTENT]) OR the classifier is below the [threshold] for
+     *   any kind, so a low-confidence EVENT/MEETING/TASK still offers to confirm
+     *   its type instead of silently committing a guess.
      * - An un-attached task (no known project, not an explicit new project) below
      *   the [threshold] asks [ClarificationQuestion.PROJECT].
      * - A low-confidence task asks [ClarificationQuestion.RECURRING], since it
@@ -42,7 +45,7 @@ object ClarificationPlanner {
     ): List<ClarificationQuestion> {
         val questions = mutableListOf<ClarificationQuestion>()
 
-        if (guess.kind == IntentKind.NO_INTENT) {
+        if (guess.kind == IntentKind.NO_INTENT || guess.confidence < threshold) {
             questions += ClarificationQuestion.KIND
         }
 

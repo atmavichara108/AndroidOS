@@ -48,11 +48,29 @@ class ClarificationPlannerTest {
     }
 
     @Test
-    fun `habit with low confidence asks nothing extra beyond none`() {
-        // HABIT is not task-like; even at low confidence no clarifying question.
+    fun `low confidence habit asks only kind`() {
+        // Low confidence for any kind asks to confirm the kind; HABIT is not
+        // task-like, so no PROJECT/RECURRING question is added.
         val guess = IntentGuess(IntentKind.HABIT, 0.4, setOf("ежедневно"))
         val q = ClarificationPlanner.plan(guess, noProject)
+        assertEquals(listOf(ClarificationQuestion.KIND), q)
+    }
+
+    @Test
+    fun `high confidence non-task asks nothing`() {
+        // A confidently-classified EVENT above threshold needs no confirmation.
+        val guess = IntentGuess(IntentKind.EVENT, 0.9, setOf("встреча"))
+        val q = ClarificationPlanner.plan(guess, noProject)
         assertTrue(q.isEmpty())
+    }
+
+    @Test
+    fun `low confidence event asks kind`() {
+        // The device finding: a low-confidence EVENT should offer to confirm
+        // its type instead of silently committing the guess.
+        val guess = IntentGuess(IntentKind.EVENT, 0.5, setOf("встреча"))
+        val q = ClarificationPlanner.plan(guess, noProject)
+        assertEquals(listOf(ClarificationQuestion.KIND), q)
     }
 
     @Test

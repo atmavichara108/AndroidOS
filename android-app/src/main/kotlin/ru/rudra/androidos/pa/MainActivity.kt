@@ -58,6 +58,7 @@ import ru.rudra.androidos.pa.domain.intent.ClarificationPlanner
 import ru.rudra.androidos.pa.domain.intent.ClarificationQuestion
 import ru.rudra.androidos.pa.domain.intent.IntentClassifier
 import ru.rudra.androidos.pa.domain.intent.IntentKind
+import ru.rudra.androidos.pa.domain.intent.PriorityExtractor
 import ru.rudra.androidos.pa.domain.intent.ProjectAttachment
 import ru.rudra.androidos.pa.domain.intent.ProjectInfo
 import ru.rudra.androidos.pa.domain.intent.ProjectResolver
@@ -675,6 +676,8 @@ private fun approve(
                     if (recurring == true) put("recurring", "true")
                     // New tasks start in the TODO kanban column.
                     put("status", "TODO")
+                    // Rule-first priority from urgency cues in the text.
+                    PriorityExtractor.extract(title)?.let { put("priority", it) }
                     // A recognised time cue gives the task a due date, so it can
                     // be grouped in the Today view (overdue/today/upcoming).
                     planned.triggerAt?.let { ta ->
