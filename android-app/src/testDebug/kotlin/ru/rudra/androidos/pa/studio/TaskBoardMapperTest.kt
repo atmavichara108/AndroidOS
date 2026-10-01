@@ -35,4 +35,33 @@ class TaskBoardMapperTest {
         assertEquals("AndroidOS", progress.cards.single().project)
         assertTrue(board.columns.none { column -> column.cards.any { it.id == "rejected" || it.id == "event-1" } })
     }
+
+    @Test fun taskProjectIdResolvesToProjectTitleWhenProjectEntityPresent() {
+        val project = Entity(
+            id = "proj-1",
+            type = EntityType("pa", "PROJECT"),
+            schemaVersion = 1,
+            attributes = mapOf("title" to "Ремонт"),
+            provenance = emptyList(),
+            status = EntityStatus.APPROVED,
+            version = 1,
+        )
+        val task = Entity(
+            id = "task-2",
+            type = EntityType("pa", "TASK"),
+            schemaVersion = 1,
+            attributes = mapOf(
+                "title" to "Купить краску",
+                "status" to "BACKLOG",
+                "projectId" to "proj-1",
+            ),
+            provenance = emptyList(),
+            status = EntityStatus.APPROVED,
+            version = 1,
+        )
+
+        val board = approvedEntitiesToTaskBoard(listOf(project, task))
+        val backlog = board.columns.first { it.id == "BACKLOG" }
+        assertEquals("Ремонт", backlog.cards.single { it.id == "task-2" }.project)
+    }
 }
