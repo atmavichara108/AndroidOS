@@ -46,6 +46,9 @@ import ru.rudra.androidos.pa.data.SherpaTranscriber
 import ru.rudra.androidos.pa.data.TranscriptRow
 import ru.rudra.androidos.pa.domain.model.Change
 import ru.rudra.androidos.pa.domain.model.ChangeOperation
+import ru.rudra.androidos.pa.domain.model.Entity
+import ru.rudra.androidos.pa.domain.model.EntityStatus
+import ru.rudra.androidos.pa.domain.model.EntityType
 import ru.rudra.androidos.pa.domain.model.InboxKind
 import ru.rudra.androidos.pa.domain.model.InboxState
 import ru.rudra.androidos.pa.domain.model.RetentionClass
@@ -78,8 +81,8 @@ import ru.rudra.androidos.pa.ui.UiInboxState
 import ru.rudra.androidos.pa.ui.UiRecording
 import ru.rudra.androidos.pa.ui.TaskBoardScreen
 import ru.rudra.androidos.pa.ui.UiTaskBoardState
-import ru.rudra.androidos.pa.ui.UiTaskCard
-import ru.rudra.androidos.pa.ui.UiTaskColumn
+import ru.rudra.androidos.pa.ui.UiTaskBoardAction
+import ru.rudra.androidos.pa.ui.approvedEntitiesToTaskBoard
 import ru.rudra.androidos.pa.ui.DailyPlanScreen
 import ru.rudra.androidos.pa.ui.UiDailyPlanState
 import ru.rudra.androidos.pa.ui.UiDailyPlanAction
@@ -232,30 +235,8 @@ private fun InboxScreenHost(
         Thread {
             ui = runCatching { toUiState(db.inboxDao().all()) }
                 .getOrElse { UiInboxState(error = it.message ?: "load failed") }
-            board = runCatching {
-                val tasks = db.entityDao().approved()
-                    .asSequence()
-                    .filter { it.type == "TASK" }
-                    .mapNotNull { row ->
-                        runCatching {
-                            val attrs = org.json.JSONObject(row.attributesJson)
-                            if (attrs.optString("status") == "DONE") return@mapNotNull null
-                            UiTaskCard(
-                                id = row.id,
-                                title = attrs.optString("title").ifBlank { "Untitled task" },
-                                project = attrs.optString("projectId").takeIf(String::isNotBlank)
-                                    ?: attrs.optString("project").takeIf(String::isNotBlank),
-                                dueLabel = attrs.optString("dueAt").takeIf(String::isNotBlank),
-                                priority = attrs.optString("priority").takeIf(String::isNotBlank),
-                            )
-                        }.getOrNull()
-                    }
-                    .toList()
-                UiTaskBoardState(
-                    title = "Approved tasks",
-                    columns = listOf(UiTaskColumn("BACKLOG", "Backlog", tasks)),
-                )
-            }.getOrElse { UiTaskBoardState(title = "Approved tasks") }
+            board = runCatching { buildTaskBoard(db) }
+                .getOrElse { UiTaskBoardState(title = "Tasks") }
             dailyPlan = runCatching { buildDailyPlanState(db) }
                 .getOrElse { UiDailyPlanState(title = "Today") }
         }.start()
@@ -296,14 +277,22 @@ private fun InboxScreenHost(
             }
         }
         if (selectedScreen == "TASKS") {
-            TaskBoardScreen(state = board)
+            TaskBoardScreen(
+                state = board,
+                onAction = { action ->
+                    when (action) {
+                        is UiTaskBoardAction.MoveTask ->
+                            setTaskStatus(db, store, deviceId, action.taskId, action.targetColumnId) { reload() }
+                    }
+                },
+            )
         } else if (selectedScreen == "TODAY") {
             DailyPlanScreen(
                 state = dailyPlan,
                 onAction = { action ->
                     when (action) {
                         is UiDailyPlanAction.CompleteTask ->
-                            completeTask(db, store, deviceId, action.id) { reload() }
+                            setTaskStatus(db, store, deviceId, action.id, "DONE") { reload() }
                     }
                 },
             )
@@ -684,6 +673,8 @@ private fun approve(
                 if (kind == "TASK") {
                     attachProjectId?.let { put("projectId", it) }
                     if (recurring == true) put("recurring", "true")
+                    // New tasks start in the TODO kanban column.
+                    put("status", "TODO")
                     // A recognised time cue gives the task a due date, so it can
                     // be grouped in the Today view (overdue/today/upcoming).
                     planned.triggerAt?.let { ta ->
@@ -968,15 +959,44 @@ private fun buildDailyPlanState(db: PaDatabase): UiDailyPlanState {
 }
 
 /**
- * Marks an approved TASK as done by setting its `status` attribute to DONE and
- * recording the change, so it drops out of the Today view and the board without
- * being deleted. Runs on a background thread.
+ * Builds the kanban board from approved TASK entities via the shared
+ * [approvedEntitiesToTaskBoard] mapper (peer UI lane), which lays them into the
+ * TODO / IN_PROGRESS / DONE columns by each task's `status` attribute (missing
+ * status -> TODO). DONE tasks stay on the board as a column; only the Today view
+ * filters them. Pure read over Room; safe on a background thread.
  */
-private fun completeTask(
+private fun buildTaskBoard(db: PaDatabase): UiTaskBoardState {
+    val entities = db.entityDao().approved().mapNotNull { row ->
+        runCatching {
+            val attrs = org.json.JSONObject(row.attributesJson)
+            val map = attrs.keys().asSequence().associateWith { k -> attrs.optString(k) }
+            Entity(
+                id = row.id,
+                type = EntityType("pa", row.type),
+                schemaVersion = row.schemaVersion,
+                attributes = map,
+                provenance = emptyList(),
+                status = EntityStatus.valueOf(row.status),
+                version = row.version,
+                deletedAt = row.deletedAt,
+            )
+        }.getOrNull()
+    }
+    return approvedEntitiesToTaskBoard(entities, title = "Tasks")
+}
+
+/**
+ * Sets an approved TASK's workflow `status` attribute (TODO / IN_PROGRESS /
+ * DONE) and records the change, bumping the entity version. Used by the board's
+ * MoveTask and by Today's complete-task (status=DONE). Runs on a background
+ * thread.
+ */
+private fun setTaskStatus(
     db: PaDatabase,
     store: RoomLocalStore,
     deviceId: String,
     taskId: String,
+    newStatus: String,
     onDone: () -> Unit,
 ) {
     Thread {
@@ -984,7 +1004,7 @@ private fun completeTask(
             val row = db.entityDao().byId(taskId)
             if (row != null) {
                 val attrs = org.json.JSONObject(row.attributesJson)
-                attrs.put("status", "DONE")
+                attrs.put("status", newStatus)
                 val newVersion = row.version + 1
                 val now = Instant.now().toString()
                 db.runInTransaction {
@@ -994,7 +1014,7 @@ private fun completeTask(
                             id = UUID.randomUUID().toString(),
                             entityId = taskId,
                             operation = ChangeOperation.UPDATE,
-                            patch = mapOf("status" to "DONE"),
+                            patch = mapOf("status" to newStatus),
                             actorDeviceId = deviceId,
                             baseVersion = row.version,
                             occurredAt = now,
@@ -1007,7 +1027,7 @@ private fun completeTask(
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("PA_APPROVE", "completeTask failed for $taskId", e)
+            android.util.Log.e("PA_APPROVE", "setTaskStatus($newStatus) failed for $taskId", e)
         }
         onDone()
     }.start()
