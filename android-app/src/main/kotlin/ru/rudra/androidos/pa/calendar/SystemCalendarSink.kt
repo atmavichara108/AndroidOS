@@ -95,18 +95,25 @@ class SystemCalendarSink(private val context: Context) : CalendarSink {
     private data class WritableCalendar(val id: Long, val name: String)
 
     /**
-     * A calendar this app may write to: the local (account-less) one when the
-     * device has it, otherwise the first calendar with contributor rights or
-     * better. Deliberately not ordered by IS_PRIMARY — that column is not
-     * exposed by every provider (it is not on this device), and an unsupported
-     * sort column fails the whole query, which would report "no writable
-     * calendar" on a phone that has several.
+     * A calendar this app may write to. Events land in a synced (non-LOCAL)
+     * calendar when the device has one, because those are the calendars the
+     * stock calendar app and its widget actually display; the account-less
+     * LOCAL calendar is only a fallback when no synced calendar is writable.
+     *
+     * Among the writable calendars we prefer the user's personal synced account
+     * (a Google account whose calendar display name looks like an email address)
+     * over shared/family calendars, so an approved capture shows up where the
+     * user actually looks. Deliberately not ordered by IS_PRIMARY — that column
+     * is not exposed by every provider (it is not on this device), and an
+     * unsupported sort column fails the whole query, which would report "no
+     * writable calendar" on a phone that has several.
      */
     private fun writableCalendar(): WritableCalendar? {
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.ACCOUNT_TYPE,
             CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
         )
         val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?"
         val args = arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
@@ -118,16 +125,25 @@ class SystemCalendarSink(private val context: Context) : CalendarSink {
                 args,
                 null,
             )?.use { cursor ->
-                var fallback: WritableCalendar? = null
+                var local: WritableCalendar? = null
+                var syncedFallback: WritableCalendar? = null
                 while (cursor.moveToNext()) {
                     val candidate = WritableCalendar(
                         id = cursor.getLong(0),
                         name = cursor.getString(2) ?: "календарь",
                     )
-                    if (cursor.getString(1) == CalendarContract.ACCOUNT_TYPE_LOCAL) return@use candidate
-                    if (fallback == null) fallback = candidate
+                    val accountType = cursor.getString(1)
+                    val accountName = cursor.getString(3)
+                    if (accountType == CalendarContract.ACCOUNT_TYPE_LOCAL) {
+                        if (local == null) local = candidate
+                        continue
+                    }
+                    if (syncedFallback == null) syncedFallback = candidate
+                    val isPersonal = accountName != null &&
+                        accountName.contains('@') && !accountName.contains("group.v.calendar")
+                    if (isPersonal) return@use candidate
                 }
-                fallback
+                syncedFallback ?: local
             }
         }.getOrNull()
     }
