@@ -50,6 +50,22 @@ data class PendingApproval(
     val previewTitle: String,
     val triggerLabel: String? = null,
     val calendarLabel: String? = null,
+    val suggestion: ApprovalSuggestion? = null,
+)
+
+/**
+ * Non-binding hint shown above Confirm, populated by the host from the domain
+ * IntentClassifier/ProjectResolver (P2-03). It never blocks: the user still
+ * presses Confirm. This is also the surface a future on-device model (Laya,
+ * WS-B) feeds once its device feasibility is proven — the UI contract is the
+ * same, only the source behind it changes.
+ */
+data class ApprovalSuggestion(
+    val kindLabel: String,        // "Задача" / "Событие" / "Идея" / "Заметка"
+    val confidence: Int,          // 0..100
+    val projectLabel: String? = null, // "проект «Ремонт»" | "новый проект" | null
+    val recurring: Boolean = false,
+    val recommended: Boolean = false, // highlight the recommended kind button
 )
 
 sealed interface UiInboxAction {
@@ -185,6 +201,19 @@ private fun ApprovalPanel(
         title = { Text("APPROVAL REQUIRED") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                approval.suggestion?.let { s ->
+                    val parts = buildList {
+                        add(s.kindLabel)
+                        add("${s.confidence}%")
+                        s.projectLabel?.let { add(it) }
+                        if (s.recurring) add("повторяющаяся")
+                    }
+                    Text(
+                        "Похоже на: ${parts.joinToString(" · ")}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Text("Create ${approval.kind.lowercase()}: ${approval.previewTitle}")
                 approval.triggerLabel?.let { label ->
                     Text(label, style = MaterialTheme.typography.titleSmall)
