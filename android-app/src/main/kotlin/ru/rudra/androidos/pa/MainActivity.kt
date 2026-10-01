@@ -359,6 +359,7 @@ private fun InboxScreenHost(
                         db, store, context, deviceId, action.id, action.kind,
                         projectId = action.projectId,
                         newProject = action.newProject,
+                        newProjectTitle = action.newProjectTitle,
                         recurring = action.recurring,
                     ) { reload() }
                 }
@@ -595,6 +596,7 @@ private fun approve(
     kind: String,
     projectId: String? = null,
     newProject: Boolean = false,
+    newProjectTitle: String? = null,
     recurring: Boolean? = null,
     onDone: () -> Unit,
 ) {
@@ -619,7 +621,8 @@ private fun approve(
             val attachProjectId: String? = when {
                 newProject -> {
                     val projId = UUID.randomUUID().toString()
-                    val projAttrs = mapOf("title" to title, "status" to "ACTIVE")
+                    val projectName = newProjectTitle?.trim()?.takeIf { it.isNotBlank() } ?: title
+                    val projAttrs = mapOf("title" to projectName, "status" to "ACTIVE")
                     val projProblems = registry.validate(
                         ru.rudra.androidos.pa.domain.model.EntityType("pa", "PROJECT"),
                         projAttrs,
