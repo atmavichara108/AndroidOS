@@ -50,10 +50,9 @@ data class StudioUiState(
 private fun defaultBoard() = UiTaskBoardState(
     title = "Project board / Personal Assistant",
     columns = listOf(
-        UiTaskColumn("backlog", "Backlog"),
-        UiTaskColumn("ready", "Ready"),
-        UiTaskColumn("progress", "In progress", listOf(UiTaskCard("task-1", "Подготовить план проекта", "AndroidOS", "Friday", "High"))),
-        UiTaskColumn("done", "Done"),
+        UiTaskColumn("TODO", "To do"),
+        UiTaskColumn("IN_PROGRESS", "In progress", listOf(UiTaskCard("task-1", "Подготовить план проекта", "AndroidOS", "Friday", "High"))),
+        UiTaskColumn("DONE", "Done"),
     ),
 )
 

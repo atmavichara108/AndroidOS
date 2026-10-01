@@ -8,12 +8,9 @@ fun approvedEntitiesToTaskBoard(
     title: String = "Tasks",
 ): UiTaskBoardState {
     val columns = linkedMapOf(
-        "BACKLOG" to "Backlog",
-        "READY" to "Ready",
+        "TODO" to "To do",
         "IN_PROGRESS" to "In progress",
-        "BLOCKED" to "Blocked",
         "DONE" to "Done",
-        "CANCELLED" to "Cancelled",
     ).map { (id, label) -> UiTaskColumn(id, label) }.toMutableList()
 
     // Resolve a task's projectId to the project's human title when the PROJECT
@@ -29,7 +26,7 @@ fun approvedEntitiesToTaskBoard(
         .filter { it.status.name == "APPROVED" && it.type.name == "TASK" }
         .map { entity ->
             val attrs = entity.attributes
-            val status = attrs["status"]?.uppercase() ?: "BACKLOG"
+            val status = attrs["status"]?.uppercase() ?: "TODO"
             val projectRef = attrs["projectId"] ?: attrs["project"]
             status to UiTaskCard(
                 id = entity.id,

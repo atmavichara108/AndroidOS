@@ -52,7 +52,7 @@ class TaskBoardMapperTest {
             schemaVersion = 1,
             attributes = mapOf(
                 "title" to "Купить краску",
-                "status" to "BACKLOG",
+                "status" to "TODO",
                 "projectId" to "proj-1",
             ),
             provenance = emptyList(),
@@ -61,7 +61,7 @@ class TaskBoardMapperTest {
         )
 
         val board = approvedEntitiesToTaskBoard(listOf(project, task))
-        val backlog = board.columns.first { it.id == "BACKLOG" }
-        assertEquals("Ремонт", backlog.cards.single { it.id == "task-2" }.project)
+        val todo = board.columns.first { it.id == "TODO" }
+        assertEquals("Ремонт", todo.cards.single { it.id == "task-2" }.project)
     }
 }

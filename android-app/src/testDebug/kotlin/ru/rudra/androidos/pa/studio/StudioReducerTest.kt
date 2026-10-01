@@ -118,10 +118,10 @@ class StudioReducerTest {
     }
 
     @Test fun kanbanMoveKeepsTaskUnique() {
-        val moved = reduceStudio(StudioScenario.CAPTURED.toUiState(), StudioAction.MoveTask("task-1", "ready"))
+        val moved = reduceStudio(StudioScenario.CAPTURED.toUiState(), StudioAction.MoveTask("task-1", "TODO"))
         assertEquals(1, moved.board.columns.sumOf { column -> column.cards.count { it.id == "task-1" } })
-        assertTrue(moved.board.columns.first { it.id == "ready" }.cards.any { it.id == "task-1" })
-        assertTrue(moved.board.columns.first { it.id == "progress" }.cards.none { it.id == "task-1" })
+        assertTrue(moved.board.columns.first { it.id == "TODO" }.cards.any { it.id == "task-1" })
+        assertTrue(moved.board.columns.first { it.id == "IN_PROGRESS" }.cards.none { it.id == "task-1" })
     }
 
     @Test fun completingPlanTaskLeavesThePlanAndIsIdempotent() {
